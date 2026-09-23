@@ -1,0 +1,8 @@
+# Dependencias directas del proyecto (las demás se instalan solas).
+# Instalar con:  pip install -r requirements.txt
+
+# Flet con CLI, runtime de escritorio y web (flet run / flet build)
+flet[all]==1.0.0
+
+# ORM para la base de datos SQLite (movimientos.db)
+SQLAlchemy==2.0.54
