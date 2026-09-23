@@ -35,6 +35,7 @@ TIPO_SELECTION = {
 
 
 class Movimiento(Base):
+
     __tablename__ = "movimientos"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
