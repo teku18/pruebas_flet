@@ -1,10 +1,11 @@
-"""Modelos ORM de la aplicación."""
+"""Modelo Movimiento: detalle de un periodo."""
 from datetime import date
 
-from sqlalchemy import Date, Float, Integer, String, select
-from sqlalchemy.orm import Mapped, mapped_column, validates
+from sqlalchemy import Date, Float, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
-from database import Base, SessionLocal
+from database import Base
+from models.mixins import CrudMixin
 
 # ---------------------------------------------------------------------------
 # Opciones de los campos Selection  ->  {clave_guardada_en_bd: "Etiqueta visible"}
@@ -34,9 +35,9 @@ TIPO_SELECTION = {
 }
 
 
-class Movimiento(Base):
-
+class Movimiento(CrudMixin, Base):
     __tablename__ = "movimientos"
+    _orden = "fecha desc, id desc"  # del más reciente al más antiguo
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     inversion: Mapped[str] = mapped_column(String(50), nullable=False)    # Selection
@@ -45,6 +46,10 @@ class Movimiento(Base):
     fecha: Mapped[date] = mapped_column(Date, nullable=False)             # Date
     tipo: Mapped[str] = mapped_column(String(50), nullable=False)         # Selection
     comentarios: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Char
+
+    # Periodo al que pertenece (Many2one / llave foránea)
+    periodo_id: Mapped[int] = mapped_column(ForeignKey("periodos.id"), nullable=False)
+    periodo: Mapped["Periodo"] = relationship(back_populates="movimientos")  # noqa: F821
 
     # --- Validaciones de los campos Selection -----------------------------
     @validates("inversion")
@@ -72,42 +77,12 @@ class Movimiento(Base):
     def tipo_label(self) -> str:
         return TIPO_SELECTION.get(self.tipo, self.tipo)
 
-    # --- Métodos de acceso a datos (sin SQL a mano) ------------------------
+    # --- Consultas propias de este modelo ----------------------------------
+    # create / get / search / search_all / update / delete vienen de CrudMixin
     @classmethod
-    def create(cls, **valores) -> "Movimiento":
-        with SessionLocal() as session:
-            movimiento = cls(**valores)
-            session.add(movimiento)
-            session.commit()
-            session.refresh(movimiento)
-            return movimiento
-
-    @classmethod
-    def search_all(cls) -> list["Movimiento"]:
-        with SessionLocal() as session:
-            consulta = select(cls).order_by(cls.id.desc())
-            return list(session.scalars(consulta))
-
-    @classmethod
-    def update(cls, movimiento_id: int, **valores) -> "Movimiento":
-        with SessionLocal() as session:
-            movimiento = session.get(cls, movimiento_id)
-            if movimiento is None:
-                raise ValueError(f"No existe el movimiento con id={movimiento_id}")
-            for campo, valor in valores.items():
-                setattr(movimiento, campo, valor)
-            session.commit()
-            session.refresh(movimiento)
-            return movimiento
-
-    @classmethod
-    def delete(cls, movimiento_id: int) -> None:
-        with SessionLocal() as session:
-            movimiento = session.get(cls, movimiento_id)
-            if movimiento is None:
-                raise ValueError(f"No existe el movimiento con id={movimiento_id}")
-            session.delete(movimiento)
-            session.commit()
+    def search_by_periodo(cls, periodo_id: int) -> list["Movimiento"]:
+        """Detalle de un periodo, del más reciente al más antiguo."""
+        return cls.search(cls.periodo_id == periodo_id)
 
     def __repr__(self) -> str:
         return (
