@@ -1,74 +1,68 @@
 """
 Pantallas de Periodos (cabecera de los movimientos):
-  /                    -> lista de periodos (pantalla principal)
-  /periodo             -> nuevo periodo (desde el botón verde)
-  /movimientos/periodo -> datos del periodo abierto (desde el engrane)
+  /finanzas                      -> lista de periodos
+  /finanzas/periodo              -> nuevo periodo (desde el botón +)
+  /finanzas/movimientos/periodo  -> datos del periodo abierto (desde el engrane)
 
 Modos del formulario (como en Odoo):
   "nuevo"  -> campos editables, [Guardar] [Cancelar]
   "ver"    -> solo lectura, en la barra: ✏ editar  🗑 eliminar
   "editar" -> campos editables, [Actualizar] [Cancelar = descartar cambios]
+
+Los métodos marcados con  # propio  son nuestros; lo demás (page.update,
+page.navigate, controles ft.*) viene de Flet.
 """
 import calendar
 from datetime import date
 
 import flet as ft
 
-from models import Periodo
-from views.comun import (
-    CampoFecha,
-    aviso,
-    boton_agregar,
-    boton_editar,
-    boton_eliminar,
-    confirmar,
-    cuadro_icono,
-    deslizar_para_eliminar,
-    fecha_corta,
+from core.ui import (
+    DateField,
+    confirm,
+    delete_button,
+    edit_button,
+    icon_box,
+    notify,
+    add_button,
+    short_date,
+    swipe_to_delete,
 )
+from modulos.finanzas import routes
+from modulos.finanzas.models import Periodo
 
 
-class PeriodosVista:
-    def __init__(self, page: ft.Page, al_abrir_periodo):
+class PeriodsView:
+    def __init__(self, page: ft.Page, on_open_period):
         """
-        al_abrir_periodo: función que se llama al tocar un periodo
+        on_open_period: función que se llama al tocar un periodo
         (la pantalla de movimientos se encarga de mostrarlo).
         """
         self.page = page
-        self.al_abrir_periodo = al_abrir_periodo
+        self.on_open_period = on_open_period
         self.registro: Periodo | None = None  # periodo mostrado en el formulario
         self.modo = "nuevo"                   # "nuevo" | "ver" | "editar"
 
-        self._crear_formulario()
-        self._crear_lista()
+        self._build_form()
+        self._build_list()
 
     # ==================================================================
     # Lista
     # ==================================================================
-    def _crear_lista(self):
+    def _build_list(self):  # propio
         self.lista = ft.ListView(
             expand=True,
             spacing=4,
-            padding=ft.Padding.only(bottom=90),  # espacio para el botón verde
+            padding=ft.Padding.only(bottom=90),  # espacio para el botón +
         )
         self.lbl_vacio = ft.Text(
-            "Aún no hay periodos. Crea uno con el botón verde.", italic=True
+            "Aún no hay periodos. Crea uno con el botón +.", italic=True
         )
 
         self.vista_lista = ft.View(
-            route="/",
-            appbar=ft.AppBar(
-                title=ft.Text("Periodos"),
-                actions=[
-                    # Engrane: abre la pantalla de ajustes
-                    ft.IconButton(
-                        ft.Icons.SETTINGS,
-                        tooltip="Ajustes",
-                        on_click=lambda e: self.page.navigate("/ajustes"),
-                    ),
-                ],
-            ),
-            floating_action_button=boton_agregar("Nuevo periodo", self.nuevo),
+            route=routes.BASE,
+            appbar=ft.AppBar(title=ft.Text("Finanzas · Periodos")),
+            floating_action_button=add_button("Nuevo periodo", self.new),
             controls=[
                 ft.SafeArea(
                     expand=True,
@@ -77,31 +71,32 @@ class PeriodosVista:
             ],
         )
 
-    def cargar(self):
+    def load(self):  # propio
         periodos = Periodo.search_all()
-        cantidades = Periodo.contar_movimientos()
-        self.lista.controls = [self._fila(p, cantidades.get(p.id, 0)) for p in periodos]
+        cantidades = Periodo.count_movements()
+        self.lista.controls = [self._row(p, cantidades.get(p.id, 0)) for p in periodos]
         self.lbl_vacio.visible = not periodos
 
-    def _fila(self, per: Periodo, cantidad: int) -> ft.Control:
+    def _row(self, per: Periodo, cantidad: int) -> ft.Control:  # propio
         """Una línea de la lista de periodos. Al tocarla se abre el periodo."""
         texto_cantidad = "1 movimiento" if cantidad == 1 else f"{cantidad} movimientos"
         linea = ft.Container(
             padding=ft.Padding.symmetric(vertical=6),
             border_radius=8,
             ink=True,  # efecto al tocar
-            on_click=lambda e, p=per: self.al_abrir_periodo(p),
+            on_click=lambda e, p=per: self.on_open_period(p),
             content=ft.Row(
                 spacing=10,
                 controls=[
-                    cuadro_icono(ft.Icons.CALENDAR_MONTH, ft.Colors.BLUE),
+                    # PRIMARY: toma el color del tema elegido en Configuración
+                    icon_box(ft.Icons.CALENDAR_MONTH, ft.Colors.PRIMARY),
                     ft.Column(
                         expand=True,
                         spacing=0,
                         controls=[
                             ft.Text(per.nombre, size=16, weight=ft.FontWeight.W_500),
                             ft.Text(
-                                f"{fecha_corta(per.fecha_inicio)} – {fecha_corta(per.fecha_fin)}",
+                                f"{short_date(per.fecha_inicio)} – {short_date(per.fecha_fin)}",
                                 size=12,
                             ),
                             ft.Text(texto_cantidad, size=12, color=ft.Colors.OUTLINE),
@@ -111,34 +106,34 @@ class PeriodosVista:
             ),
         )
         # ◄── deslizar a la izquierda: eliminar (con confirmación), igual que movimientos
-        return deslizar_para_eliminar(
+        return swipe_to_delete(
             self.page,
             key=f"periodo-{per.id}",
             contenido=linea,
             titulo="Eliminar periodo",
-            mensaje=self._mensaje_eliminar(per, cantidad),
-            al_eliminar=lambda p=per: self._eliminar(p),
+            mensaje=self._delete_message(per, cantidad),
+            on_delete=lambda p=per: self._delete(p),
         )
 
     # ==================================================================
     # Formulario
     # ==================================================================
-    def _crear_formulario(self):
+    def _build_form(self):  # propio
         self.txt_nombre = ft.TextField(label="Nombre", max_length=100)
-        self.campo_inicio = CampoFecha(self.page, "Fecha inicio")
-        self.campo_fin = CampoFecha(self.page, "Fecha fin")
+        self.campo_inicio = DateField(self.page, "Fecha inicio")
+        self.campo_fin = DateField(self.page, "Fecha fin")
 
         self.lbl_titulo_form = ft.Text("Nuevo periodo")  # va en la barra superior
-        self.btn_guardar = ft.Button("Guardar", icon=ft.Icons.SAVE, on_click=self.guardar)
-        btn_cancelar = ft.TextButton("Cancelar", icon=ft.Icons.CLOSE, on_click=self.cancelar)
+        self.btn_guardar = ft.Button("Guardar", icon=ft.Icons.SAVE, on_click=self.save)
+        btn_cancelar = ft.TextButton("Cancelar", icon=ft.Icons.CLOSE, on_click=self.cancel)
         self.fila_botones = ft.Row([self.btn_guardar, btn_cancelar])
 
         # Lápiz y bote en la barra superior (solo en modo "ver")
-        self.btn_barra_editar = boton_editar(self.editar)
-        self.btn_barra_eliminar = boton_eliminar(self.confirmar_eliminar)
+        self.btn_barra_editar = edit_button(self.edit)
+        self.btn_barra_eliminar = delete_button(self.confirm_delete)
 
         self.vista_form = ft.View(
-            route="/periodo",  # main.py la ajusta: /periodo o /movimientos/periodo
+            route=routes.PERIODO,  # el módulo la ajusta: PERIODO o MOVIMIENTOS_PERIODO
             appbar=ft.AppBar(
                 title=self.lbl_titulo_form,
                 actions=[self.btn_barra_editar, self.btn_barra_eliminar],
@@ -158,15 +153,15 @@ class PeriodosVista:
                 )
             ],
         )
-        self._aplicar_modo()
+        self._apply_mode()
 
-    def _aplicar_modo(self):
+    def _apply_mode(self):  # propio
         """Ajusta campos, botones y título según self.modo."""
         lectura = self.modo == "ver"
 
         self.txt_nombre.read_only = lectura
-        self.campo_inicio.habilitar(not lectura)
-        self.campo_fin.habilitar(not lectura)
+        self.campo_inicio.set_enabled(not lectura)
+        self.campo_fin.set_enabled(not lectura)
 
         self.btn_barra_editar.visible = lectura
         self.btn_barra_eliminar.visible = lectura
@@ -181,64 +176,64 @@ class PeriodosVista:
             self.lbl_titulo_form.value = "Editar periodo"
             self.btn_guardar.content = "Actualizar"
 
-    def _llenar(self, per: Periodo):
+    def _fill(self, per: Periodo):  # propio
         """Pasa los datos del registro a los campos."""
         self.txt_nombre.value = per.nombre
-        self.campo_inicio.asignar(per.fecha_inicio)
-        self.campo_fin.asignar(per.fecha_fin)
+        self.campo_inicio.set_value(per.fecha_inicio)
+        self.campo_fin.set_value(per.fecha_fin)
 
-    def limpiar_errores(self):
+    def clear_errors(self):  # propio
         self.txt_nombre.error_text = None
         self.campo_fin.txt.error_text = None
 
-    def limpiar_formulario(self):
+    def clear_form(self):  # propio
         """Por defecto propone el mes actual completo."""
-        self.limpiar_errores()
+        self.clear_errors()
         hoy = date.today()
         ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
         self.txt_nombre.value = ""
-        self.campo_inicio.asignar(hoy.replace(day=1))
-        self.campo_fin.asignar(hoy.replace(day=ultimo_dia))
+        self.campo_inicio.set_value(hoy.replace(day=1))
+        self.campo_fin.set_value(hoy.replace(day=ultimo_dia))
         self.registro = None
         self.modo = "nuevo"
-        self._aplicar_modo()
+        self._apply_mode()
 
     # --- Acciones -------------------------------------------------------
-    def nuevo(self, e=None):
-        """Botón verde: abre el formulario de periodo vacío."""
-        self.limpiar_formulario()
-        self.page.navigate("/periodo")
+    def new(self, e=None):  # propio
+        """Botón +: abre el formulario de periodo vacío."""
+        self.clear_form()
+        self.page.navigate(routes.PERIODO)
 
-    def ver(self, per: Periodo):
+    def show(self, per: Periodo):  # propio
         """Engrane (desde movimientos): muestra el periodo en solo lectura."""
-        self.limpiar_errores()
+        self.clear_errors()
         self.registro = Periodo.get(per.id)  # datos frescos de la BD
-        self._llenar(self.registro)
+        self._fill(self.registro)
         self.modo = "ver"
-        self._aplicar_modo()
-        self.page.navigate("/movimientos/periodo")
+        self._apply_mode()
+        self.page.navigate(routes.MOVIMIENTOS_PERIODO)
 
-    def editar(self, e=None):
+    def edit(self, e=None):  # propio
         """Lápiz: habilita los campos del periodo mostrado."""
         self.modo = "editar"
-        self._aplicar_modo()
+        self._apply_mode()
         self.page.update()
 
-    def cancelar(self, e=None):
+    def cancel(self, e=None):  # propio
         if self.modo == "editar":
             # Descarta los cambios: vuelve a leer el registro y regresa a "ver"
-            self.limpiar_errores()
+            self.clear_errors()
             self.registro = Periodo.get(self.registro.id)
-            self._llenar(self.registro)
+            self._fill(self.registro)
             self.modo = "ver"
-            self._aplicar_modo()
+            self._apply_mode()
             self.page.update()
         else:
-            self.limpiar_formulario()
-            self.page.navigate("/")
+            self.clear_form()
+            self.page.navigate(routes.BASE)
 
-    def guardar(self, e=None):
-        self.limpiar_errores()
+    def save(self, e=None):  # propio
+        self.clear_errors()
         nombre = (self.txt_nombre.value or "").strip()
         faltantes = False
         if not nombre:
@@ -262,50 +257,50 @@ class PeriodosVista:
             else:
                 self.registro = Periodo.update(self.registro.id, **valores)
         except Exception as ex:  # noqa: BLE001
-            aviso(self.page, f"Error al guardar: {ex}")
+            notify(self.page, f"Error al guardar: {ex}")
             return
 
         if self.modo == "nuevo":
-            self.limpiar_formulario()
-            aviso(self.page, "Periodo guardado")
-            self.page.navigate("/")  # regresa a la lista de periodos
+            self.clear_form()
+            notify(self.page, "Periodo guardado")
+            self.page.navigate(routes.BASE)  # regresa a la lista de periodos
         else:
             # Se queda en el registro, ahora en solo lectura
-            self._llenar(self.registro)
+            self._fill(self.registro)
             self.modo = "ver"
-            self._aplicar_modo()
-            aviso(self.page, "Periodo actualizado")
+            self._apply_mode()
+            notify(self.page, "Periodo actualizado")
             self.page.update()
 
     # ==================================================================
     # Eliminar
     # ==================================================================
-    def _mensaje_eliminar(self, per: Periodo, cantidad: int) -> str:
+    def _delete_message(self, per: Periodo, cantidad: int) -> str:  # propio
         mensaje = f"¿Seguro que deseas eliminar el periodo «{per.nombre}»?"
         if cantidad:
             mensaje += f"\n\nTambién se eliminarán sus {cantidad} movimiento(s)."
         return mensaje
 
-    def confirmar_eliminar(self, e=None):
+    def confirm_delete(self, e=None):  # propio
         """Bote de la barra: elimina el periodo mostrado, con confirmación."""
         per = self.registro
-        cantidad = Periodo.contar_movimientos().get(per.id, 0)
+        cantidad = Periodo.count_movements().get(per.id, 0)
 
-        def eliminar():
-            if self._eliminar(per):
-                self.limpiar_formulario()
-                self.page.navigate("/")  # el periodo ya no existe: a la lista
+        def delete():  # propio
+            if self._delete(per):
+                self.clear_form()
+                self.page.navigate(routes.BASE)  # el periodo ya no existe: a la lista
 
-        confirmar(self.page, "Eliminar periodo", self._mensaje_eliminar(per, cantidad), eliminar)
+        confirm(self.page, "Eliminar periodo", self._delete_message(per, cantidad), delete)
 
-    def _eliminar(self, per: Periodo) -> bool:
+    def _delete(self, per: Periodo) -> bool:  # propio
         """Borra el periodo (y sus movimientos) y refresca la lista."""
         try:
             Periodo.delete(per.id)
         except Exception as ex:  # noqa: BLE001
-            aviso(self.page, f"Error al eliminar: {ex}")
+            notify(self.page, f"Error al eliminar: {ex}")
             return False
-        self.cargar()
-        aviso(self.page, "Periodo eliminado")
+        self.load()
+        notify(self.page, "Periodo eliminado")
         self.page.update()
         return True

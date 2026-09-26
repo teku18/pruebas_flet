@@ -1,4 +1,4 @@
-"""Piezas de interfaz que comparten varias pantallas."""
+"""Piezas de interfaz que comparten varias pantallas y módulos."""
 from datetime import date
 
 import flet as ft
@@ -7,45 +7,39 @@ MESES = ["ene", "feb", "mar", "abr", "may", "jun",
          "jul", "ago", "sept", "oct", "nov", "dic"]
 
 
-def fecha_corta(d: date) -> str:
+def short_date(d: date) -> str:  # propio
     """date(2026, 9, 1) -> '1 sept 2026'"""
     return f"{d.day} {MESES[d.month - 1]} {d.year}"
 
 
-def opciones_dropdown(seleccion: dict) -> list[ft.DropdownOption]:
+def dropdown_options(seleccion: dict) -> list[ft.DropdownOption]:  # propio
     """Convierte un *_SELECTION del modelo en opciones de un Dropdown."""
     return [ft.DropdownOption(key=k, text=v) for k, v in seleccion.items()]
 
 
-def aviso(page: ft.Page, texto: str):
+def notify(page: ft.Page, texto: str):  # propio
     """Mensaje corto en la parte inferior (SnackBar)."""
     page.show_dialog(ft.SnackBar(ft.Text(texto)))
 
 
-def boton_agregar(texto: str, on_click) -> ft.FloatingActionButton:
-    """Botón verde flotante de 'Nuevo ...'."""
-    return ft.FloatingActionButton(
-        icon=ft.Icons.ADD,
-        content=texto,
-        bgcolor=ft.Colors.GREEN_600,
-        foreground_color=ft.Colors.WHITE,
-        on_click=on_click,
-    )
+def add_button(texto: str, on_click) -> ft.FloatingActionButton:  # propio
+    """Botón flotante de 'Nuevo ...'. Toma el color del tema elegido."""
+    return ft.FloatingActionButton(icon=ft.Icons.ADD, content=texto, on_click=on_click)
 
 
-def boton_editar(on_click) -> ft.IconButton:
+def edit_button(on_click) -> ft.IconButton:  # propio
     """Lápiz para la barra superior del detalle de un registro."""
     return ft.IconButton(ft.Icons.EDIT, tooltip="Editar", on_click=on_click)
 
 
-def boton_eliminar(on_click) -> ft.IconButton:
+def delete_button(on_click) -> ft.IconButton:  # propio
     """Bote de basura para la barra superior del detalle de un registro."""
     return ft.IconButton(
         ft.Icons.DELETE, icon_color=ft.Colors.RED, tooltip="Eliminar", on_click=on_click
     )
 
 
-def cuadro_icono(icono, color) -> ft.Container:
+def icon_box(icono, color) -> ft.Container:  # propio
     """Ícono dentro de un cuadro de color suave (inicio de cada línea)."""
     return ft.Container(
         width=42,
@@ -57,7 +51,7 @@ def cuadro_icono(icono, color) -> ft.Container:
     )
 
 
-def fondo_deslizar(icono, texto: str, color, alineacion: ft.MainAxisAlignment) -> ft.Container:
+def swipe_background(icono, texto: str, color, alineacion: ft.MainAxisAlignment) -> ft.Container:  # propio
     """Fondo de color que aparece detrás de una línea al deslizarla (Dismissible)."""
     return ft.Container(
         bgcolor=color,
@@ -73,26 +67,26 @@ def fondo_deslizar(icono, texto: str, color, alineacion: ft.MainAxisAlignment) -
     )
 
 
-def deslizar_para_eliminar(
-    page: ft.Page, key: str, contenido: ft.Control, titulo: str, mensaje: str, al_eliminar
+def swipe_to_delete(  # propio
+    page: ft.Page, key: str, contenido: ft.Control, titulo: str, mensaje: str, on_delete
 ) -> ft.Dismissible:
     """
     Envuelve una línea de lista para que se pueda deslizar a la izquierda
     y eliminar, siempre con confirmación.
-      ◄── deslizar -> fondo rojo "Eliminar" -> confirmar -> al_eliminar()
+      ◄── deslizar -> fondo rojo "Eliminar" -> confirmar -> on_delete()
     """
 
-    def al_deslizar(e):
+    def on_swipe(e):  # propio
         dismissible = e.control
         # confirm_dismiss es async: se lanza con run_task desde este handler normal
-        responder = lambda decision: page.run_task(  # noqa: E731
+        respond = lambda decision: page.run_task(  # noqa: E731
             dismissible.confirm_dismiss, decision
         )
         # La línea sale solo si el usuario confirma; si cancela, regresa
-        confirmar(
+        confirm(
             page, titulo, mensaje,
-            al_confirmar=lambda: responder(True),
-            al_cancelar=lambda: responder(False),
+            on_accept=lambda: respond(True),
+            on_cancel=lambda: respond(False),
         )
 
     return ft.Dismissible(
@@ -102,28 +96,28 @@ def deslizar_para_eliminar(
         dismiss_direction=ft.DismissDirection.END_TO_START,
         # Con una sola dirección basta "background"
         # ("secondary_background" solo se usa si hay dos direcciones)
-        background=fondo_deslizar(
+        background=swipe_background(
             ft.Icons.DELETE, "Eliminar", ft.Colors.RED, ft.MainAxisAlignment.END
         ),
-        on_confirm_dismiss=al_deslizar,              # antes de quitar la línea
-        on_dismiss=lambda e: al_eliminar(),          # la línea ya salió
+        on_confirm_dismiss=on_swipe,              # antes de quitar la línea
+        on_dismiss=lambda e: on_delete(),         # la línea ya salió
     )
 
 
-def confirmar(page: ft.Page, titulo: str, mensaje: str, al_confirmar, al_cancelar=None):
+def confirm(page: ft.Page, titulo: str, mensaje: str, on_accept, on_cancel=None):  # propio
     """
     Diálogo de confirmación con botones Cancelar / Eliminar.
-    al_cancelar (opcional): se llama si el usuario elige Cancelar.
+    on_cancel (opcional): se llama si el usuario elige Cancelar.
     """
 
-    def aceptar(e):
+    def accept(e):  # propio
         page.pop_dialog()
-        al_confirmar()
+        on_accept()
 
-    def cancelar(e):
+    def cancel(e):  # propio
         page.pop_dialog()
-        if al_cancelar:
-            al_cancelar()
+        if on_cancel:
+            on_cancel()
 
     page.show_dialog(
         ft.AlertDialog(
@@ -131,11 +125,11 @@ def confirmar(page: ft.Page, titulo: str, mensaje: str, al_confirmar, al_cancela
             title=ft.Text(titulo),
             content=ft.Text(mensaje),
             actions=[
-                ft.TextButton("Cancelar", on_click=cancelar),
+                ft.TextButton("Cancelar", on_click=cancel),
                 ft.TextButton(
                     "Eliminar",
                     style=ft.ButtonStyle(color=ft.Colors.RED),
-                    on_click=aceptar,
+                    on_click=accept,
                 ),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
@@ -143,17 +137,40 @@ def confirmar(page: ft.Page, titulo: str, mensaje: str, al_confirmar, al_cancela
     )
 
 
-class CampoFecha:
+def coming_soon_view(route: str, titulo: str, icono, texto: str) -> ft.View:  # propio
+    """Pantalla de un módulo que todavía no tiene contenido."""
+    return ft.View(
+        route=route,
+        appbar=ft.AppBar(title=ft.Text(titulo)),
+        vertical_alignment=ft.MainAxisAlignment.CENTER,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        controls=[
+            ft.Icon(icono, size=72, color=ft.Colors.PRIMARY),
+            ft.Text(titulo, size=22, weight=ft.FontWeight.BOLD),
+            ft.Text(texto, text_align=ft.TextAlign.CENTER, color=ft.Colors.OUTLINE),
+            ft.Container(height=8),
+            ft.Row(
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Icon(ft.Icons.CONSTRUCTION, size=18, color=ft.Colors.OUTLINE),
+                    ft.Text("Próximamente", italic=True, color=ft.Colors.OUTLINE),
+                ],
+            ),
+        ],
+    )
+
+
+class DateField:
     """
     Campo de fecha: TextField de solo lectura + DatePicker.
 
     Uso:
-        campo = CampoFecha(page, "Fecha")
-        campo.fila          -> control para poner en el formulario
-        campo.valor         -> fecha elegida (date)
-        campo.asignar(d)    -> cambia la fecha mostrada
-        campo.limitar(a, b) -> solo permite elegir entre a y b
-        campo.habilitar(False) -> modo lectura (no abre el calendario)
+        campo = DateField(page, "Fecha")
+        campo.fila             -> control para poner en el formulario
+        campo.valor            -> fecha elegida (date)
+        campo.set_value(d)     -> cambia la fecha mostrada
+        campo.set_range(a, b)  -> solo permite elegir entre a y b
+        campo.set_enabled(False) -> modo lectura (no abre el calendario)
         campo.txt.error_text = "..."  -> mostrar un error
     """
 
@@ -166,36 +183,36 @@ class CampoFecha:
             value=self.valor.isoformat(),
             read_only=True,
             suffix=ft.Icon(ft.Icons.CALENDAR_MONTH),
-            on_click=self.abrir,
+            on_click=self.open,
         )
         self.picker = ft.DatePicker(
             first_date=date(2000, 1, 1),
             last_date=date(2100, 12, 31),
-            on_change=self._al_cambiar,
+            on_change=self._on_change,
         )
-        self.btn = ft.IconButton(ft.Icons.EDIT_CALENDAR, on_click=self.abrir)
+        self.btn = ft.IconButton(ft.Icons.EDIT_CALENDAR, on_click=self.open)
         self.fila = ft.Row([ft.Container(self.txt, expand=True), self.btn])
 
-    def asignar(self, valor: date):
+    def set_value(self, valor: date):  # propio
         self.valor = valor
         self.txt.value = valor.isoformat()
 
-    def limitar(self, inicio: date, fin: date):
+    def set_range(self, inicio: date, fin: date):  # propio
         self.picker.first_date = inicio
         self.picker.last_date = fin
 
-    def habilitar(self, activo: bool):
+    def set_enabled(self, activo: bool):  # propio
         self.activo = activo
         self.btn.visible = activo  # en modo lectura se oculta el botón del calendario
 
-    def abrir(self, e=None):
+    def open(self, e=None):  # propio
         if not self.activo:
             return
         self.picker.value = self.valor
         self.page.show_dialog(self.picker)
 
-    def _al_cambiar(self, e):
+    def _on_change(self, e):  # propio
         if e.control.value:
             valor = e.control.value
-            self.asignar(valor.date() if hasattr(valor, "date") else valor)
+            self.set_value(valor.date() if hasattr(valor, "date") else valor)
             self.page.update()

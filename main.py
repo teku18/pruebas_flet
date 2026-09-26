@@ -1,26 +1,32 @@
 """
-Punto de entrada: configura la página, crea las pantallas y maneja las rutas.
+Control Kraken — punto de entrada.
 
 Estructura del proyecto:
-  models/  -> datos (SQLAlchemy): Periodo, Movimiento
-  views/   -> pantallas (Flet): una clase por pantalla con sus acciones
+  core/                 -> lo compartido: BD, CrudMixin, UI común, temas, inicio
+  modulos/finanzas/     -> Periodo, Movimiento y sus pantallas
+  modulos/memorias/     -> (próximamente) pensamientos por voz
+  modulos/agenda/       -> (próximamente) pendientes / chismoso
+  modulos/configuracion -> modo claro/oscuro y color de la app
+
+Convención: los métodos y funciones marcados con  # propio  son nuestros;
+lo que no lo tiene (page.update, page.navigate, ft.*) viene de Flet.
 """
 import flet as ft
 
-from database import init_db
-from views import AjustesVista, MovimientosVista, PeriodosVista
+from core.database import init_db
+from core.home import APP_NAME, HomeView
+from core.themes import DEFAULT_COLOR, apply_color
+from modulos import MODULES
 
 
-def main(page: ft.Page):
+def main(page: ft.Page):  # propio
     # Crea la BD / tablas si no existen (y migra si hace falta)
     init_db()
 
-    # Configuración visual
-    page.title = "Mi Primera App"
+    # Configuración visual (el modo y color guardados se aplican al final)
+    page.title = APP_NAME
     page.theme_mode = ft.ThemeMode.LIGHT
-    # Misma paleta (azul) para ambos temas; Flet genera los tonos claros/oscuros
-    page.theme = ft.Theme(color_scheme_seed=ft.Colors.BLUE)
-    page.dark_theme = ft.Theme(color_scheme_seed=ft.Colors.BLUE)
+    apply_color(page, DEFAULT_COLOR)
 
     # Tamaño de ventana (ahora se configura en page.window, no en ft.run)
     page.window.width = 412
@@ -29,74 +35,50 @@ def main(page: ft.Page):
     page.window.maximizable = False
 
     # ------------------------------------------------------------------
-    # Pantallas
+    # Módulos + pantalla de inicio
     # ------------------------------------------------------------------
-    # Las pantallas se avisan entre sí con funciones (callbacks):
-    #   Periodos    --tocar un periodo-->  Movimientos.abrir_periodo
-    #   Movimientos --engrane----------->  Periodos.ver
-    # (el lambda se evalúa al hacer clic, cuando "periodos" ya existe)
-    movimientos = MovimientosVista(page, al_ver_periodo=lambda per: periodos.ver(per))
-    periodos = PeriodosVista(page, al_abrir_periodo=movimientos.abrir_periodo)
-    ajustes = AjustesVista(page)
+    modulos = [Modulo(page) for Modulo in MODULES]
+    inicio = HomeView(page, modulos)
+
+    def module_for(route: str):  # propio
+        """El módulo dueño de la ruta ("/finanzas/..." -> Finanzas), o None."""
+        for m in modulos:
+            if route == m.route or route.startswith(m.route + "/"):
+                return m
+        return None
 
     # ------------------------------------------------------------------
-    # Navegación: según la ruta, se apilan las pantallas.
-    #   /                    -> Periodos
-    #   /periodo             -> Periodos > Nuevo periodo
-    #   /movimientos         -> Periodos > Movimientos del periodo
-    #   /movimientos/periodo -> Periodos > Movimientos > Datos del periodo (engrane)
-    #   /movimiento          -> Periodos > Movimientos > Movimiento
-    #   /ajustes             -> Periodos > Ajustes
+    # Navegación: el inicio siempre abajo y encima las pantallas del módulo.
+    #   /            -> Inicio
+    #   /finanzas... -> Inicio > (pantallas de Finanzas)
+    #   /memorias    -> Inicio > Memorias
+    #   /agenda      -> Inicio > Agenda
+    #   /ajustes     -> Inicio > Configuración
     # ------------------------------------------------------------------
-    def cambio_de_ruta(e=None):
-        # Sin periodo abierto (o si se eliminó) no hay movimientos: volver al inicio
-        if page.route.startswith("/movimiento"):
-            if movimientos.periodo is not None:
-                movimientos.cargar()  # relee el periodo y su lista
-            if movimientos.periodo is None:
-                page.route = "/"
-
+    def on_route_change(e=None):  # propio
         page.views.clear()
-        page.views.append(periodos.vista_lista)
-        if page.route == "/":
-            periodos.cargar()  # refresca nombres y cantidad de movimientos
-        elif page.route == "/periodo":
-            periodos.vista_form.route = page.route
-            page.views.append(periodos.vista_form)
-        elif page.route == "/movimientos":
-            page.views.append(movimientos.vista_lista)
-        elif page.route == "/movimientos/periodo":
-            periodos.vista_form.route = page.route
-            page.views.append(movimientos.vista_lista)
-            page.views.append(periodos.vista_form)
-        elif page.route == "/movimiento":
-            page.views.append(movimientos.vista_lista)
-            page.views.append(movimientos.vista_form)
-        elif page.route == "/ajustes":
-            page.views.append(ajustes.vista)
+        page.views.append(inicio.vista)
+        modulo = module_for(page.route)
+        if modulo is not None:
+            page.views.extend(modulo.build_views(page.route))
         page.update()
 
-    def regresar(e):
+    def on_back(e):  # propio
         """Flecha de regreso (o botón atrás del celular)."""
-        # Al salir de un formulario se descarta lo que no se guardó
-        if page.route == "/movimiento":
-            movimientos.limpiar_formulario()
-            page.navigate("/movimientos")
-        elif page.route == "/movimientos/periodo":
-            periodos.limpiar_formulario()
-            page.navigate("/movimientos")
+        modulo = module_for(page.route)
+        if modulo is not None:
+            modulo.go_back(page.route)
         else:
-            if page.route == "/periodo":
-                periodos.limpiar_formulario()
             page.navigate("/")
 
-    page.on_route_change = cambio_de_ruta
-    page.on_view_pop = regresar
+    page.on_route_change = on_route_change
+    page.on_view_pop = on_back
 
-    cambio_de_ruta()
+    on_route_change()
 
-    # Aplica el tema que el usuario eligió la última vez
-    page.run_task(ajustes.cargar_tema_guardado)
+    # Cada módulo carga lo que necesite al arrancar (p. ej. el tema guardado)
+    for m in modulos:
+        page.run_task(m.on_start)
 
 
 # Ejecuta la aplicación

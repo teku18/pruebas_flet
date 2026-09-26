@@ -4,8 +4,8 @@ from datetime import date
 from sqlalchemy import Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
-from database import Base
-from models.mixins import CrudMixin
+from core.database import Base
+from core.mixins import CrudMixin
 
 # ---------------------------------------------------------------------------
 # Opciones de los campos Selection  ->  {clave_guardada_en_bd: "Etiqueta visible"}
@@ -39,6 +39,7 @@ class Movimiento(CrudMixin, Base):
     __tablename__ = "movimientos"
     _orden = "fecha desc, id desc"  # del más reciente al más antiguo
 
+    # Los nombres de los campos son columnas de la BD: no se renombran
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     inversion: Mapped[str] = mapped_column(String(50), nullable=False)    # Selection
     monto: Mapped[float] = mapped_column(Float, nullable=False)           # Float
@@ -53,34 +54,34 @@ class Movimiento(CrudMixin, Base):
 
     # --- Validaciones de los campos Selection -----------------------------
     @validates("inversion")
-    def _validar_inversion(self, key, value):
-        return _validar_seleccion(key, value, INVERSION_SELECTION)
+    def _validate_inversion(self, key, value):  # propio
+        return _validate_selection(key, value, INVERSION_SELECTION)
 
     @validates("plataforma")
-    def _validar_plataforma(self, key, value):
-        return _validar_seleccion(key, value, PLATAFORMA_SELECTION)
+    def _validate_plataforma(self, key, value):  # propio
+        return _validate_selection(key, value, PLATAFORMA_SELECTION)
 
     @validates("tipo")
-    def _validar_tipo(self, key, value):
-        return _validar_seleccion(key, value, TIPO_SELECTION)
+    def _validate_tipo(self, key, value):  # propio
+        return _validate_selection(key, value, TIPO_SELECTION)
 
     # --- Etiquetas legibles (como display_name de un Selection) -----------
     @property
-    def inversion_label(self) -> str:
+    def inversion_label(self) -> str:  # propio
         return INVERSION_SELECTION.get(self.inversion, self.inversion)
 
     @property
-    def plataforma_label(self) -> str:
+    def plataforma_label(self) -> str:  # propio
         return PLATAFORMA_SELECTION.get(self.plataforma, self.plataforma)
 
     @property
-    def tipo_label(self) -> str:
+    def tipo_label(self) -> str:  # propio
         return TIPO_SELECTION.get(self.tipo, self.tipo)
 
     # --- Consultas propias de este modelo ----------------------------------
     # create / get / search / search_all / update / delete vienen de CrudMixin
     @classmethod
-    def search_by_periodo(cls, periodo_id: int) -> list["Movimiento"]:
+    def search_by_period(cls, periodo_id: int) -> list["Movimiento"]:  # propio
         """Detalle de un periodo, del más reciente al más antiguo."""
         return cls.search(cls.periodo_id == periodo_id)
 
@@ -91,7 +92,7 @@ class Movimiento(CrudMixin, Base):
         )
 
 
-def _validar_seleccion(campo: str, valor: str, opciones: dict) -> str:
+def _validate_selection(campo: str, valor: str, opciones: dict) -> str:  # propio
     if valor not in opciones:
         raise ValueError(
             f"Valor '{valor}' no válido para '{campo}'. Opciones: {list(opciones)}"

@@ -4,8 +4,8 @@ from datetime import date
 from sqlalchemy import Date, Integer, String, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from database import Base, SessionLocal
-from models.mixins import CrudMixin
+from core.database import Base, SessionLocal
+from core.mixins import CrudMixin
 
 
 class Periodo(CrudMixin, Base):
@@ -24,16 +24,16 @@ class Periodo(CrudMixin, Base):
     )
 
     # --- Validación (la llama CrudMixin en create y update) ----------------
-    def _validar(self) -> None:
+    def _validate(self) -> None:  # propio
         if self.fecha_fin < self.fecha_inicio:
             raise ValueError("La fecha fin no puede ser anterior a la fecha inicio")
 
     # --- Consultas propias de este modelo ----------------------------------
     @classmethod
-    def contar_movimientos(cls) -> dict[int, int]:
+    def count_movements(cls) -> dict[int, int]:  # propio
         """{periodo_id: cantidad de movimientos} para mostrar en la lista."""
         # Import local para evitar importación circular entre los dos modelos
-        from models.movimiento import Movimiento
+        from modulos.finanzas.models.movimiento import Movimiento
 
         with SessionLocal() as session:
             consulta = select(Movimiento.periodo_id, func.count()).group_by(

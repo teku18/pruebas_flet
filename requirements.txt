@@ -6,3 +6,6 @@ flet[all]==1.0.0
 
 # ORM para la base de datos SQLite (movimientos.db)
 SQLAlchemy==2.0.54
+
+# Migraciones de la base de datos (como makemigrations/migrate de Django)
+alembic==1.20.0
