@@ -70,7 +70,7 @@ class SettingsView:
                             self.rejilla_colores,
                             ft.Divider(),
                             ft.Text(
-                                f"Control Kraken v{APP_VERSION}",
+                                f"ControlKraken v{APP_VERSION}",
                                 size=12,
                                 color=ft.Colors.OUTLINE,
                             ),

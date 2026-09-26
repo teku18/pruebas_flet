@@ -1,5 +1,5 @@
 """
-Contrato que cumple cada módulo de Control Kraken
+Contrato que cumple cada módulo de ControlKraken
 (parecido al __manifest__ + estructura de un addon de Odoo).
 
 Para agregar un módulo nuevo:

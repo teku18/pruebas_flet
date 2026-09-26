@@ -1,5 +1,5 @@
 """
-Pantalla de inicio de Control Kraken: una tarjeta por módulo.
+Pantalla de inicio de ControlKraken: una tarjeta por módulo.
 
 Las tarjetas se arman solas con la lista de módulos (nombre, ícono, ruta),
 así que un módulo nuevo aparece aquí sin tocar este archivo.
@@ -10,7 +10,7 @@ import flet as ft
 
 from core.module import AppModule
 
-APP_NAME = "Control Kraken"
+APP_NAME = "ControlKraken"
 LEMA = "Tu vida, bajo control"
 
 
@@ -39,17 +39,17 @@ class HomeView:
         )
 
     def _header(self) -> ft.Control:  # propio
-        """Logo provisional (emoji de pulpo) + nombre de la app."""
+        """Logo (assets/icon.png) + nombre de la app."""
         return ft.Row(
             spacing=14,
             controls=[
-                ft.Container(
+                # "icon.png" se busca en la carpeta assets/ (la de ft.run)
+                ft.Image(
+                    src="icon.png",
                     width=64,
                     height=64,
-                    border_radius=32,
-                    bgcolor=ft.Colors.PRIMARY_CONTAINER,
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Text("🐙", size=34),
+                    border_radius=16,
+                    fit=ft.BoxFit.COVER,
                 ),
                 ft.Column(
                     spacing=0,

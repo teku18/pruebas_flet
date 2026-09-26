@@ -1,4 +1,6 @@
-# Control Kraken 🐙
+# ControlKraken
+
+![ControlKraken](assets/logo.png)
 
 App personal hecha con Flet para llevar el control de todo: finanzas,
 proyectos y, próximamente, memorias por voz y agenda.

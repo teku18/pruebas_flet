@@ -1,5 +1,5 @@
 """
-Control Kraken — punto de entrada.
+ControlKraken — punto de entrada.
 
 Estructura del proyecto:
   core/                 -> lo compartido: BD, CrudMixin, UI común, temas, inicio

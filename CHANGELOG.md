@@ -1,9 +1,10 @@
-# Cambios de Control Kraken
+# Cambios de ControlKraken
 
 ## 0.2.0 — 2026-09-25
 
 ### Nuevo
-- Pantalla de inicio "Control Kraken" con una tarjeta por módulo.
+- Ícono y logo de ControlKraken (`assets/icon.png`, `assets/logo.png`).
+- Pantalla de inicio "ControlKraken" con una tarjeta por módulo.
 - Módulo **Proyectos**: tipo (personal, familiar, trabajo), estado y bitácora
   de avances con fecha, notas y adjuntos como evidencia.
 - Configuración con 12 colores para toda la app, además de claro/oscuro/sistema.

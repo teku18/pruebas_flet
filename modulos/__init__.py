@@ -1,5 +1,5 @@
 """
-Módulos de Control Kraken (como los addons instalados en Odoo).
+Módulos de ControlKraken (como los addons instalados en Odoo).
 
 El orden de esta lista es el orden de las tarjetas en la pantalla de inicio.
 Para agregar un módulo: créalo en modulos/<nombre>/ y súmalo aquí.
