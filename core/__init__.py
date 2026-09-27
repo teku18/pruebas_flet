@@ -11,4 +11,4 @@ se instalan los addons):
 
 # Versión de la app (ver CHANGELOG.md). Súbela en cada entrega:
 #   0.2.0 -> 0.2.1 arreglos · 0.3.0 algo nuevo · 1.0.0 lista para usarse en serio
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.5.0"

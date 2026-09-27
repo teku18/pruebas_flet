@@ -9,3 +9,9 @@ SQLAlchemy==2.0.54
 
 # Migraciones de la base de datos (como makemigrations/migrate de Django)
 alembic==1.20.0
+
+# Leer los Excel del importador de Finanzas
+openpyxl==3.1.5
+
+# Gráficas nativas de Flet (pastel, barras, líneas) para los reportes
+flet-charts==1.0.0

@@ -45,12 +45,27 @@ class CrudMixin:
         Ejemplo:  Movimiento.search(Movimiento.periodo_id == 3)
         """
         with SessionLocal() as session:
-            consulta = select(cls).where(*condiciones).order_by(text(cls._orden))
+            consulta = select(cls).where(*condiciones).order_by(text(cls._order_sql()))
             return list(session.scalars(consulta))
 
     @classmethod
     def search_all(cls) -> list:  # propio
         return cls.search()
+
+    @classmethod
+    def _order_sql(cls) -> str:  # propio
+        """
+        "fecha desc, id desc" -> "movimientos.fecha desc, movimientos.id desc".
+        Con el nombre de la tabla delante no hay confusión cuando la consulta
+        trae otras tablas unidas (p. ej. plataformas, que también tiene "id").
+        """
+        partes = []
+        for parte in cls._orden.split(","):
+            columna, *resto = parte.strip().split()
+            if "." not in columna:
+                columna = f"{cls.__tablename__}.{columna}"
+            partes.append(" ".join([columna, *resto]))
+        return ", ".join(partes)
 
     # ------------------------------------------------------------------
     # Escritura

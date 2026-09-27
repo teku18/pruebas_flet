@@ -1,21 +1,30 @@
 """
 Modelos del módulo Finanzas (como la carpeta models/ de un addon de Odoo).
 
-Importar ambos aquí es importante: SQLAlchemy necesita conocer las dos
-clases para resolver las relaciones entre ellas ("Periodo" <-> "Movimiento").
+Importarlos todos aquí es importante: SQLAlchemy necesita conocer las clases
+para resolver las relaciones entre ellas por nombre ("Periodo", "Plataforma"...).
 """
+from modulos.finanzas.models.catalogo import Inversion, Plataforma
 from modulos.finanzas.models.movimiento import (
-    INVERSION_SELECTION,
-    PLATAFORMA_SELECTION,
+    SIGNO_TIPO,
     TIPO_SELECTION,
+    TIPOS_GASTO,
+    TIPOS_INGRESO,
+    TIPOS_MANUALES,
+    TIPOS_TRASPASO,
     Movimiento,
 )
 from modulos.finanzas.models.periodo import Periodo
 
 __all__ = [
-    "INVERSION_SELECTION",
-    "PLATAFORMA_SELECTION",
+    "SIGNO_TIPO",
     "TIPO_SELECTION",
+    "TIPOS_GASTO",
+    "TIPOS_INGRESO",
+    "TIPOS_MANUALES",
+    "TIPOS_TRASPASO",
+    "Inversion",
     "Movimiento",
     "Periodo",
+    "Plataforma",
 ]

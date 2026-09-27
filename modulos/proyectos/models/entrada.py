@@ -37,7 +37,7 @@ class Entrada(CrudMixin, Base):
                 select(cls)
                 .where(cls.proyecto_id == proyecto_id)
                 .options(selectinload(cls.adjuntos))
-                .order_by(text(cls._orden))
+                .order_by(text(cls._order_sql()))
             )
             return list(session.scalars(consulta))
 
