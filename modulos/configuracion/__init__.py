@@ -1,4 +1,4 @@
-"""Módulo Configuración: modo claro/oscuro y color de la app."""
+"""Módulo Configuración: modo claro/oscuro, color de la app y respaldo."""
 import flet as ft
 
 from core.module import AppModule
@@ -7,7 +7,7 @@ from modulos.configuracion.views import SettingsView
 
 class ConfiguracionModule(AppModule):
     nombre = "Configuración"
-    descripcion = "Tema y colores"
+    descripcion = "Tema, colores y respaldo"
     icono = ft.Icons.SETTINGS
     route = "/ajustes"
 

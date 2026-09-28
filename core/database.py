@@ -3,7 +3,10 @@ Configuración de la base de datos (SQLAlchemy ORM + SQLite) y migraciones (Alem
 
 Flujo al abrir la app (init_db):
   1. Si la BD es de antes de Alembic, se marca como "ya tiene la versión 0001"
-  2. alembic upgrade head -> aplica las migraciones que falten, sin perder datos
+  2. Si hay migraciones pendientes (actualizaste la app), copia de seguridad
+     local en respaldos/ (core/backup.py)
+  3. alembic upgrade head -> aplica las migraciones que falten, sin perder datos
+Si la BD no existía, BD_NUEVA queda en True: la app ofrece restaurar un respaldo.
 """
 from pathlib import Path
 
@@ -21,6 +24,9 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+# True si al abrir la app no había BD (equipo nuevo): se ofrece restaurar
+BD_NUEVA = False
 
 # Revisión que corresponde a las tablas que ya existían antes de Alembic
 BASELINE_REVISION = "0001"
@@ -50,6 +56,10 @@ def alembic_config() -> Config:  # propio
 
 def init_db():  # propio
     """Deja la BD al día: aplica las migraciones pendientes."""
+    global BD_NUEVA
+    from core.backup import backup_before_migrate  # aquí para evitar import circular
+
+    BD_NUEVA = not DB_PATH.exists()
     import_models()
     cfg = alembic_config()
 
@@ -59,4 +69,5 @@ def init_db():  # propio
         # "stamp" solo anota la versión, no toca tus datos.
         command.stamp(cfg, BASELINE_REVISION)
 
+    backup_before_migrate()  # solo hace algo si hay migraciones pendientes
     command.upgrade(cfg, "head")

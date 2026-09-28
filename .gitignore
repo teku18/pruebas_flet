@@ -44,3 +44,6 @@ Thumbs.db
 
 # Archivos de la app (adjuntos, audios): se respaldan aparte, no van a git
 data/
+
+# Copias locales automáticas (antes de migrar / restaurar)
+respaldos/

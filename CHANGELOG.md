@@ -1,11 +1,36 @@
 # Cambios de ControlKraken
 
+## 0.6.1 — 2026-09-27
+
+### Nuevo
+- **Aviso de respaldo de otro equipo**: al abrir, si en la carpeta hay un respaldo
+  de otro equipo más nuevo que lo último de aquí → [Restaurar] o [Este equipo es mi base].
+  Marca ⚠ si este equipo también tiene cambios posteriores.
+- Equipo nuevo: botón **Restaurar el más reciente** (muestra fecha y equipo).
+- Nunca se borran los respaldos de las últimas 24 h (los que baja rclone).
+- `docs/respaldo.md`: cron que también baja los respaldos de otros equipos y
+  cómo cambiar de "base de operaciones".
+
+## 0.6.0 — 2026-09-27
+
+### Nuevo
+- **Respaldo** (Configuración → Respaldo): zip con la BD, los adjuntos y un
+  manifest (versión, migración, fecha, equipo).
+  - Automático 2 min después de tu último cambio (y al abrir, si quedó algo sin respaldar).
+  - Respaldar ahora / Restaurar… (valida el zip; guarda antes tu BD actual).
+  - Se conservan los últimos 10 + uno por mes.
+- **Equipo nuevo**: si no hay BD, la app ofrece restaurar un respaldo.
+- **Copia automática antes de migrar** (al actualizar la app) en `respaldos/`.
+- Guía `docs/respaldo.md`: subir a Google Drive con rclone y montar un equipo nuevo.
+
 ## 0.5.0 — 2026-09-26
 
 ### Nuevo
 - **Cerrar periodo** (⚙ dentro del periodo): propone el siguiente ("Inversiones 2027"),
   muestra con qué saldos abrirá y crea el nuevo con un saldo inicial por
   concepto/plataforma. El cerrado queda 🔒 en solo lectura.
+- **Solo cerrar** (sin abrir otro): queda 🔒 y sale del acumulado global; muestra sus
+  "Saldos al cierre" para capturarlos a mano en el periodo que abras con +.
 - **Reabrir periodo**, solo si no se abrió otro con su cierre.
 - Varios periodos abiertos a la vez (p. ej. Inversiones y Gastos como libros separados).
 - **Traspasos entre conceptos** (Vacaciones → Mio), además de entre plataformas.

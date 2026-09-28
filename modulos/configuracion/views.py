@@ -2,7 +2,8 @@
 Pantalla de Configuración (/ajustes):
   - Modo: claro / oscuro / sistema
   - Color de la app: 12 colores (core/themes.py)
-Ambas preferencias se guardan en el dispositivo y se aplican al abrir la app.
+  - Respaldo: carpeta, automático, respaldar ahora, restaurar (respaldo.py)
+Las preferencias se guardan en el dispositivo y se aplican al abrir la app.
 """
 import flet as ft
 
@@ -15,6 +16,7 @@ from core.themes import (
     apply_color,
     apply_mode,
 )
+from modulos.configuracion.respaldo import BackupSection
 
 CLAVE_MODO = "tema"    # se conserva la clave anterior para no perder tu elección
 CLAVE_COLOR = "color"
@@ -48,6 +50,7 @@ class SettingsView:
         # Cuadrícula de colores (se redibuja al elegir uno para mover la ✓)
         self.rejilla_colores = ft.Row(wrap=True, spacing=4, run_spacing=12)
         self._build_color_grid()
+        self.respaldo = BackupSection(page, self.prefs)
 
         self.vista = ft.View(
             route=route,
@@ -68,6 +71,8 @@ class SettingsView:
                                 color=ft.Colors.OUTLINE,
                             ),
                             self.rejilla_colores,
+                            ft.Divider(),
+                            *self.respaldo.controles,
                             ft.Divider(),
                             ft.Text(
                                 f"ControlKraken v{APP_VERSION}",
@@ -146,3 +151,4 @@ class SettingsView:
         self._set_mode(modo if modo in THEME_MODES else DEFAULT_MODE)
         self._set_color(color if color in THEME_COLORS else DEFAULT_COLOR)
         self.page.update()
+        await self.respaldo.load()  # y arranca el respaldo automático
