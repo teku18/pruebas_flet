@@ -8,33 +8,36 @@ Reportes de Finanzas (/finanzas/reportes), desde el ícono 📊 de la lista de p
 Se filtra por periodo (desplegable) y por concepto (chips), igual que en tu Excel:
 primero el concepto, después cómo se reparte entre plataformas.
 
-Colores (guía de visualización):
+Colores (guía de visualización, en colores.py):
   - Cada plataforma tiene SIEMPRE el mismo color (se asigna por su id, no por
     su tamaño), así "Nu" no cambia de color al cambiar de filtro.
   - El pastel muestra TODAS las plataformas (sin agrupar en "Otras").
+
+Exportar (⬇ en la barra): el periodo y concepto que estás viendo, a Excel,
+con las mismas gráficas (exportador.py).
 """
 import math
 
 import flet as ft
 import flet_charts as fch
 
-from core.ui import MESES
+from core.ui import MESES, notify
 from modulos.finanzas import routes
-from modulos.finanzas.models import Inversion, Movimiento, Periodo, Plataforma
+from modulos.finanzas.colores import (
+    AZUL,
+    GRIS_OTRAS,
+    PALETA_CLARO,
+    PALETA_OSCURO,
+    platform_colors,
+)
+from modulos.finanzas.exportador import export_file_name, export_period
+from modulos.finanzas.models import Inversion, Movimiento, Periodo
 from modulos.finanzas.services import (
     distribution_by_platform,
     money,
     monthly_savings,
     period_summary,
 )
-
-# Paleta categórica validada (orden fijo; modo claro / modo oscuro)
-PALETA_CLARO = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
-                "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-PALETA_OSCURO = ["#3987e5", "#d95926", "#199e70", "#c98500",
-                 "#d55181", "#008300", "#9085e9", "#e66767"]
-GRIS_OTRAS = "#8c8b86"
-AZUL = "#2a78d6"
 
 
 def short_money(valor: float) -> str:  # propio
@@ -62,6 +65,7 @@ class ReportsView:
         self.inversion_id: int | None = None
         # True = abierto desde un periodo: se queda en ese periodo (sin selector)
         self.fijo = False
+        self.picker = ft.FilePicker()  # para "Guardar como…" del Excel
 
         self.dd_periodo = ft.Dropdown(label="Periodo", expand=True, on_select=self._on_period)
         self.fila_periodo = ft.Row([self.dd_periodo])
@@ -72,7 +76,14 @@ class ReportsView:
 
         self.vista = ft.View(
             route=routes.REPORTES,
-            appbar=ft.AppBar(title=ft.Text("Reportes")),
+            appbar=ft.AppBar(
+                title=ft.Text("Reportes"),
+                actions=[
+                    # ⬇ Excel del periodo (y concepto) que estás viendo, con gráficas
+                    ft.IconButton(ft.Icons.DOWNLOAD, tooltip="Exportar a Excel",
+                                  on_click=self.export_excel),
+                ],
+            ),
             scroll=ft.ScrollMode.AUTO,
             controls=[
                 ft.SafeArea(
@@ -136,6 +147,34 @@ class ReportsView:
             )
             for clave, nombre in opciones
         ]
+
+    # ==================================================================
+    # Exportar a Excel
+    # ==================================================================
+    async def export_excel(self, e=None):  # propio
+        """
+        Excel del periodo y concepto que estás viendo: hoja de movimientos
+        (se puede reimportar) + hoja "Reporte" con el pastel y la línea.
+        El archivo se arma en memoria y Flet lo escribe donde elijas.
+        """
+        if self.periodo_id is None:
+            return
+        periodo = Periodo.get(self.periodo_id)
+        concepto = Inversion.get(self.inversion_id) if self.inversion_id else None
+        try:
+            contenido = export_period(periodo, self.inversion_id)
+        except Exception as ex:  # noqa: BLE001
+            notify(self.page, f"No se pudo generar el Excel: {ex}")
+            return
+        ruta = await self.picker.save_file(
+            dialog_title="Guardar reporte en Excel",
+            file_name=export_file_name(periodo, concepto),
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["xlsx"],
+            src_bytes=contenido,  # Flet escribe el archivo (escritorio, web y celular)
+        )
+        if ruta or self.page.web:  # en web se descarga directo, sin ruta
+            notify(self.page, "Excel exportado")
 
     def set_concept(self, inversion_id: int | None):  # propio
         self.inversion_id = inversion_id
@@ -208,17 +247,8 @@ class ReportsView:
         return PALETA_OSCURO if oscuro else PALETA_CLARO
 
     def _platform_colors(self) -> dict[int, str]:  # propio
-        """
-        Color fijo por plataforma, no por tamaño: se reparte en orden de alta
-        entre las plataformas que tienen movimientos (las que nunca se usaron
-        no gastan colores). Si hubiera más de 8, las extra van en gris.
-        """
-        paleta = self._palette()
-        usadas = Plataforma.usage_count()
-        ids = sorted(p.id for p in Plataforma.search_all() if usadas.get(p.id))
-        colores = {pid: paleta[i] if i < len(paleta) else GRIS_OTRAS
-                   for i, pid in enumerate(ids)}
-        return colores
+        """Color fijo por plataforma (ver colores.py), con la paleta del modo actual."""
+        return platform_colors(self._palette())
 
     def _distribution_section(self, periodo: Periodo) -> ft.Control:  # propio
         reparto = distribution_by_platform(periodo, self.inversion_id)

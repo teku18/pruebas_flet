@@ -29,7 +29,7 @@ docs/respaldo.md        respaldo a Google Drive con rclone y equipo nuevo
 ## Respaldo
 
 Configuración → Respaldo: zip con la BD y los adjuntos en la carpeta que elijas
-(automático 2 min después de tu último cambio). Para subirlo a Google Drive y
+(automático cada N horas/días/semanas/meses, si hubo cambios). Para subirlo a Google Drive y
 restaurarlo en otro equipo, ver [docs/respaldo.md](docs/respaldo.md).
 
 ## Cambiar un modelo (migraciones)

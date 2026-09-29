@@ -14,10 +14,15 @@ Dónde se guardan:
   - respaldos/ junto a main.py: copias locales automáticas ANTES de migrar
     (al actualizar la app) y ANTES de restaurar. Está en .gitignore.
 
-Se conservan los últimos 5 + el más reciente de cada mes (12 meses).
+Se conservan los últimos 5 + el más reciente de cada mes (12 meses) + todo lo
+de las últimas 24 h (así lo que rclone baja de Drive no se borra y se vuelve a bajar).
+
+Otro equipo: si en la carpeta hay un respaldo de OTRO equipo más nuevo que lo
+último que respaldaste o restauraste aquí, la app avisa (newest_foreign).
 Restaurar: valida el zip, guarda tu BD actual en respaldos/, reemplaza la BD y
 data/, y aplica las migraciones si el respaldo es de una versión anterior.
 """
+import calendar
 import json
 import shutil
 import socket
@@ -25,7 +30,7 @@ import sqlite3
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from alembic.script import ScriptDirectory
@@ -39,6 +44,7 @@ LOCAL_DIR = ROOT_DIR / "respaldos"     # copias de seguridad automáticas locale
 MANIFEST = "manifest.json"
 CONSERVAR_ULTIMOS = 5
 CONSERVAR_MESES = 12
+PROTEGER_HORAS = 24     # lo más reciente nunca se borra
 
 
 @dataclass
@@ -77,6 +83,11 @@ def known_revision(revision: str) -> bool:  # propio
         return False
 
 
+def this_device() -> str:  # propio
+    """Nombre de este equipo (va en el manifest de cada respaldo)."""
+    return socket.gethostname()
+
+
 def changed_since(timestamp: float) -> bool:  # propio
     """¿La BD se modificó después de ese momento? (cada guardado cambia el archivo)."""
     return DB_PATH.exists() and DB_PATH.stat().st_mtime > timestamp
@@ -111,7 +122,7 @@ def create_backup(destino: Path, motivo: str = "manual") -> Path:  # propio
             "version_app": APP_VERSION,
             "migracion": db_revision(copia),
             "creado": ahora.isoformat(timespec="seconds"),
-            "equipo": socket.gethostname(),
+            "equipo": this_device(),
             "motivo": motivo,
         }
 
@@ -148,7 +159,9 @@ def prune(carpeta: Path, ultimos: int = CONSERVAR_ULTIMOS,  # propio
           meses: int = CONSERVAR_MESES) -> int:
     """Borra respaldos viejos: quedan los últimos N + el más nuevo de cada mes."""
     respaldos = list_backups(carpeta)
+    limite = datetime.now().timestamp() - PROTEGER_HORAS * 3600
     conservar = {b.ruta for b in respaldos[:ultimos]}
+    conservar |= {b.ruta for b in respaldos if b.fecha.timestamp() > limite}
     vistos = set()
     for b in respaldos:  # del más nuevo al más viejo: el primero de cada mes es el último
         mes = (b.fecha.year, b.fecha.month)
@@ -161,6 +174,51 @@ def prune(carpeta: Path, ultimos: int = CONSERVAR_ULTIMOS,  # propio
             b.ruta.unlink(missing_ok=True)
             borrados += 1
     return borrados
+
+
+PERIODOS = {"hora": "horas", "dia": "días", "semana": "semanas", "mes": "meses"}
+
+
+def next_backup(ultimo: float, cada: int, periodo: str) -> datetime:  # propio
+    """
+    Cuándo toca el siguiente respaldo automático: último + cada × periodo.
+    Sin respaldos previos (ultimo = 0) -> ya toca.
+    Meses: mismo día del mes (31 ene + 1 mes = 28/29 feb).
+    """
+    if not ultimo:
+        return datetime.now()
+    base = datetime.fromtimestamp(ultimo)
+    cada = max(1, int(cada))
+    if periodo == "mes":
+        total = base.month - 1 + cada
+        año, mes = base.year + total // 12, total % 12 + 1
+        dia = min(base.day, calendar.monthrange(año, mes)[1])
+        return base.replace(year=año, month=mes, day=dia)
+    horas = {"hora": 1, "dia": 24, "semana": 24 * 7}.get(periodo, 24)
+    return base + timedelta(hours=horas * cada)
+
+
+def newest_foreign(carpeta: Path, despues_de: float,  # propio
+                   ignorar: set[str] | None = None) -> tuple[BackupInfo, dict] | None:
+    """
+    El respaldo más nuevo hecho en OTRO equipo después de `despues_de`
+    (timestamp de lo último que respaldaste o restauraste aquí), o None.
+    `ignorar`: nombres de zip que ya dijiste "este no".
+    """
+    ignorar = ignorar or set()
+    yo = this_device()
+    for b in list_backups(carpeta):  # del más nuevo al más viejo
+        if b.fecha.timestamp() <= despues_de:
+            return None  # de aquí para atrás todo es más viejo
+        if b.ruta.name in ignorar:
+            continue
+        try:
+            manifest = read_manifest(b.ruta)
+        except ValueError:
+            continue  # zip dañado o de una versión más nueva: no se ofrece
+        if manifest.get("equipo") and manifest["equipo"] != yo:
+            return b, manifest
+    return None
 
 
 def backup_before_migrate() -> Path | None:  # propio

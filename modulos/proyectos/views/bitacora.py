@@ -20,13 +20,28 @@ from core.ui import (
     add_button,
     confirm,
     delete_button,
+    dropdown_options,
     edit_button,
     notify,
     short_date,
     swipe_to_delete,
 )
 from modulos.proyectos import routes
-from modulos.proyectos.models import ADJUNTOS_DIR, Adjunto, Entrada, Proyecto
+from modulos.proyectos.models import (
+    ADJUNTOS_DIR,
+    TIPO_ENTRADA_SELECTION,
+    Adjunto,
+    Entrada,
+    Proyecto,
+)
+
+# Ícono y color de cada tipo de entrada
+ESTILO_ENTRADA = {
+    "avance": (ft.Icons.TRENDING_UP, ft.Colors.OUTLINE),
+    "hito": (ft.Icons.STAR, ft.Colors.AMBER),
+    "problema": (ft.Icons.REPORT_PROBLEM, ft.Colors.ORANGE),
+    "cierre": (ft.Icons.FLAG, ft.Colors.GREEN),
+}
 
 EXT_IMAGEN = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp"}
 
@@ -49,6 +64,7 @@ class LogView:
         self.proyecto: Proyecto | None = None  # proyecto abierto
         self.registro: Entrada | None = None   # entrada mostrada en el formulario
         self.modo = "nuevo"
+        self.solo_hitos = False                # filtro de la lista (línea de tiempo)
 
         # Adjuntos del formulario: lista de dicts
         #   {"id": int|None, "nombre", "tamano", "ruta": str|None,
@@ -73,6 +89,12 @@ class LogView:
             "Sin entradas. Registra el primer avance con el botón +.", italic=True
         )
         self.lbl_titulo_lista = ft.Text("Bitácora")
+        self.chip_hitos = ft.Chip(
+            label=ft.Text("Solo hitos"),
+            leading=ft.Icon(ft.Icons.STAR, color=ft.Colors.AMBER),
+            selected=False,
+            on_select=self.toggle_milestones,
+        )
 
         self.vista_lista = ft.View(
             route=routes.BITACORA,
@@ -90,24 +112,41 @@ class LogView:
             controls=[
                 ft.SafeArea(
                     expand=True,
-                    content=ft.Column(expand=True, controls=[self.lbl_vacio, self.lista]),
+                    content=ft.Column(
+                        expand=True, controls=[ft.Row([self.chip_hitos]), self.lbl_vacio, self.lista]
+                    ),
                 )
             ],
         )
 
     def open_project(self, proyecto: Proyecto):  # propio
         """Lo llama la lista de proyectos al tocar uno."""
+        if self.proyecto is None or self.proyecto.id != proyecto.id:
+            self.solo_hitos = False  # otro proyecto: la lista empieza completa
         self.proyecto = proyecto
         self.page.navigate(routes.BITACORA)
+
+    def toggle_milestones(self, e=None):  # propio
+        self.solo_hitos = not self.solo_hitos
+        self.load()
+        self.page.update()
 
     def load(self):  # propio
         self.proyecto = Proyecto.get(self.proyecto.id)  # por si se editó o eliminó
         if self.proyecto is None:
             return
         self.lbl_titulo_lista.value = self.proyecto.nombre
-        entradas = Entrada.search_by_project(self.proyecto.id)
+        self.chip_hitos.selected = self.solo_hitos
+        entradas = Entrada.search_by_project(
+            self.proyecto.id, tipo="hito" if self.solo_hitos else None
+        )
         self.lista.controls = [self._row(en) for en in entradas]
         self.lbl_vacio.visible = not entradas
+        self.lbl_vacio.value = (
+            "Sin hitos todavía. Marca como Hito los avances importantes."
+            if self.solo_hitos
+            else "Sin entradas. Registra el primer avance con el botón +."
+        )
 
     def _row(self, en: Entrada) -> ft.Control:  # propio
         """Tarjeta de una entrada: fecha y hora, notas (3 líneas) y adjuntos."""
@@ -128,10 +167,17 @@ class LogView:
                 )
             ]
 
+        icono, color = ESTILO_ENTRADA.get(en.tipo, ESTILO_ENTRADA["avance"])
+        es_hito = en.tipo == "hito"
         tarjeta = ft.Container(
             padding=12,
             border_radius=12,
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            # Los hitos resaltan con un fondo ámbar suave
+            bgcolor=(
+                ft.Colors.with_opacity(0.15, ft.Colors.AMBER)
+                if es_hito
+                else ft.Colors.SURFACE_CONTAINER_HIGHEST
+            ),
             ink=True,
             on_click=lambda e, x=en: self.show(x),
             content=ft.Column(
@@ -140,12 +186,13 @@ class LogView:
                     ft.Row(
                         spacing=4,
                         controls=[
-                            ft.Icon(ft.Icons.SCHEDULE, size=14, color=ft.Colors.OUTLINE),
+                            ft.Icon(icono, size=14, color=color),
                             ft.Text(
-                                f"{short_date(en.fecha_hora.date())} · "
+                                f"{en.tipo_label} · {short_date(en.fecha_hora.date())} · "
                                 f"{en.fecha_hora:%H:%M}",
                                 size=12,
                                 color=ft.Colors.OUTLINE,
+                                weight=ft.FontWeight.BOLD if es_hito else None,
                             ),
                         ],
                     ),
@@ -168,6 +215,12 @@ class LogView:
     # ==================================================================
     def _build_form(self):  # propio
         self.campo_fecha = DateField(self.page, "Fecha")
+        self.dd_tipo = ft.Dropdown(
+            label="Tipo",
+            options=dropdown_options(TIPO_ENTRADA_SELECTION),
+            value="avance",
+            expand=True,
+        )
         self.txt_notas = ft.TextField(
             label="Notas del avance", multiline=True, min_lines=4, max_lines=12, expand=True
         )
@@ -199,6 +252,7 @@ class LogView:
                         spacing=10,
                         controls=[
                             self.campo_fecha.fila,
+                            ft.Row([self.dd_tipo]),
                             # Dentro de un Row con expand=True ocupa todo el ancho
                             ft.Row([self.txt_notas]),
                             ft.Row(
@@ -222,6 +276,7 @@ class LogView:
         lectura = self.modo == "ver"
         self.txt_notas.read_only = lectura
         self.campo_fecha.set_enabled(not lectura)
+        self.dd_tipo.disabled = lectura
         self.btn_adjuntar.visible = not lectura
 
         self.btn_barra_editar.visible = lectura
@@ -322,6 +377,7 @@ class LogView:
     # --- Llenar / limpiar -------------------------------------------------
     def _fill(self, en: Entrada):  # propio
         self.campo_fecha.set_value(en.fecha_hora.date())
+        self.dd_tipo.value = en.tipo
         self.txt_notas.value = en.notas
         self.adjuntos = [
             {"id": a.id, "nombre": a.nombre, "tamano": a.tamano, "ruta": a.ruta,
@@ -336,6 +392,7 @@ class LogView:
     def clear_form(self):  # propio
         self.clear_errors()
         self.campo_fecha.set_value(date.today())
+        self.dd_tipo.value = "avance"
         self.txt_notas.value = ""
         self.adjuntos = []
         self.adjuntos_borrar = []
@@ -387,7 +444,10 @@ class LogView:
             return
 
         valores = dict(
-            proyecto_id=self.proyecto.id, fecha_hora=self._entry_datetime(), notas=notas
+            proyecto_id=self.proyecto.id,
+            fecha_hora=self._entry_datetime(),
+            tipo=self.dd_tipo.value or "avance",
+            notas=notas,
         )
         try:
             if self.modo == "nuevo":

@@ -26,9 +26,11 @@ from core.ui import (
 from modulos.proyectos import routes
 from modulos.proyectos.models import (
     ESTADO_PROYECTO_SELECTION,
+    ESTADOS_CERRADOS,
     TIPO_PROYECTO_SELECTION,
     Proyecto,
 )
+from modulos.proyectos.services import ProjectStats, all_stats, project_stats
 
 # Ícono y color de cada tipo (fijos: identifican el tipo de un vistazo)
 ESTILO_TIPO = {
@@ -95,8 +97,8 @@ class ProjectsView:
 
     def load(self):  # propio
         proyectos = Proyecto.search_by_tipo(self.filtro)
-        resumen = Proyecto.entries_summary()
-        self.lista.controls = [self._row(p, *resumen.get(p.id, (0, None))) for p in proyectos]
+        stats = all_stats()
+        self.lista.controls = [self._row(p, stats.get(p.id, ProjectStats())) for p in proyectos]
         self.lbl_vacio.visible = not proyectos
         self.lbl_vacio.value = (
             "Aún no hay proyectos. Crea uno con el botón +."
@@ -104,13 +106,27 @@ class ProjectsView:
             else "No hay proyectos de este tipo."
         )
 
-    def _row(self, pro: Proyecto, cantidad: int, ultima) -> ft.Control:  # propio
+    def _row(self, pro: Proyecto, st: ProjectStats) -> ft.Control:  # propio
         icono, color = ESTILO_TIPO.get(pro.tipo, (ft.Icons.FOLDER, ft.Colors.GREY))
+        cantidad = st.entradas
         if cantidad:
             texto_entradas = "1 entrada" if cantidad == 1 else f"{cantidad} entradas"
-            texto_entradas += f" · última {short_date(ultima.date())}"
+            texto_entradas += f" · última {short_date(st.ultima)}"
         else:
             texto_entradas = "Sin entradas todavía"
+
+        # Nombre (+ estrella si es destacado)
+        fila_nombre = [ft.Text(pro.nombre, size=16, weight=ft.FontWeight.W_500,
+                               expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)]
+        if pro.destacado:
+            fila_nombre.append(ft.Icon(ft.Icons.STAR, size=18, color=ft.Colors.AMBER))
+
+        # Tercera línea: lo que más importa ver de un vistazo
+        if st.estancado:
+            pie = ft.Text(f"⚠ {st.dias_sin_avance} días sin avance", size=12,
+                          color=ft.Colors.ORANGE)
+        else:
+            pie = ft.Text(texto_entradas, size=12, color=ft.Colors.OUTLINE)
 
         linea = ft.Container(
             padding=ft.Padding.symmetric(vertical=6),
@@ -125,9 +141,12 @@ class ProjectsView:
                         expand=True,
                         spacing=0,
                         controls=[
-                            ft.Text(pro.nombre, size=16, weight=ft.FontWeight.W_500),
-                            ft.Text(f"{pro.tipo_label} · {pro.estado_label}", size=12),
-                            ft.Text(texto_entradas, size=12, color=ft.Colors.OUTLINE),
+                            ft.Row(fila_nombre, spacing=4),
+                            ft.Text(
+                                f"{pro.tipo_label} · {pro.estado_label} · {st.duracion_texto}",
+                                size=12,
+                            ),
+                            pie,
                         ],
                     ),
                 ],
@@ -151,6 +170,11 @@ class ProjectsView:
         self.fila_estado = ft.Row()
         self._new_dropdowns()
         self.campo_inicio = DateField(self.page, "Fecha de inicio")
+        # Fecha fin: solo se ve si el estado es Terminado o Cancelado
+        self.campo_fin = DateField(self.page, "Fecha de fin")
+        self.sw_destacado = ft.Switch(label="Destacado (para el resumen del año)")
+        # Ficha en modo "ver": duración, entradas, hitos, última actividad
+        self.lbl_resumen = ft.Text(size=13, color=ft.Colors.OUTLINE)
         self.txt_descripcion = ft.TextField(
             label="Descripción", multiline=True, min_lines=2, max_lines=6
         )
@@ -179,7 +203,10 @@ class ProjectsView:
                             self.fila_tipo,
                             self.fila_estado,
                             self.campo_inicio.fila,
+                            self.campo_fin.fila,
+                            self.sw_destacado,
                             self.txt_descripcion,
+                            self.lbl_resumen,
                             self.fila_botones,
                         ],
                     )
@@ -198,6 +225,7 @@ class ProjectsView:
             options=dropdown_options(ESTADO_PROYECTO_SELECTION),
             value="activo",
             expand=True,
+            on_select=self._on_estado,
         )
         self.fila_tipo.controls = [self.dd_tipo]
         self.fila_estado.controls = [self.dd_estado]
@@ -209,6 +237,10 @@ class ProjectsView:
         self.dd_tipo.disabled = lectura
         self.dd_estado.disabled = lectura
         self.campo_inicio.set_enabled(not lectura)
+        self.campo_fin.set_enabled(not lectura)
+        self.sw_destacado.disabled = lectura
+        self._toggle_fin()
+        self.lbl_resumen.visible = lectura
 
         self.btn_barra_editar.visible = lectura
         self.btn_barra_eliminar.visible = lectura
@@ -223,12 +255,49 @@ class ProjectsView:
             self.lbl_titulo_form.value = "Editar proyecto"
             self.btn_guardar.content = "Actualizar"
 
+    def _toggle_fin(self):  # propio
+        self.campo_fin.fila.visible = self.dd_estado.value in ESTADOS_CERRADOS
+
+    def _on_estado(self, e=None):  # propio
+        """Al pasar a Terminado/Cancelado aparece la fecha fin (propone hoy)."""
+        if self.dd_estado.value in ESTADOS_CERRADOS and not (self.registro and self.registro.fecha_fin):
+            self.campo_fin.set_value(date.today())
+        self._toggle_fin()
+        self.page.update()
+
     def _fill(self, pro: Proyecto):  # propio
         self.txt_nombre.value = pro.nombre
         self.dd_tipo.value = pro.tipo
         self.dd_estado.value = pro.estado
         self.campo_inicio.set_value(pro.fecha_inicio)
+        self.campo_fin.set_value(pro.fecha_fin or date.today())
+        self.sw_destacado.value = pro.destacado
         self.txt_descripcion.value = pro.descripcion or ""
+        self.lbl_resumen.value = self._summary_text(pro)
+
+    @staticmethod
+    def _pending_tasks(proyecto_id: int) -> int:  # propio
+        """Las tareas viven en la Agenda; Proyectos solo pregunta cuántas hay."""
+        from modulos.agenda.services import pending_by_project
+
+        return pending_by_project(proyecto_id)
+
+    def _summary_text(self, pro: Proyecto) -> str:  # propio
+        st = project_stats(pro)
+        verbo = "Duró" if pro.cerrado else "Lleva"
+        partes = [f"{verbo} {st.duracion_texto}"]
+        partes.append("1 entrada" if st.entradas == 1 else f"{st.entradas} entradas")
+        if st.hitos:
+            partes.append("1 hito" if st.hitos == 1 else f"{st.hitos} hitos")
+        tareas = self._pending_tasks(pro.id)
+        if tareas:
+            partes.append("1 tarea pendiente" if tareas == 1 else f"{tareas} tareas pendientes")
+        texto = " · ".join(partes)
+        if not pro.cerrado and st.ultima:
+            dias = st.dias_sin_avance
+            cuando = "hoy" if dias == 0 else "ayer" if dias == 1 else f"hace {dias} días"
+            texto += f"\nÚltimo avance: {cuando}"
+        return texto
 
     def clear_errors(self):  # propio
         self.txt_nombre.error_text = None
@@ -236,13 +305,15 @@ class ProjectsView:
 
     def clear_form(self):  # propio
         self.clear_errors()
+        self.registro = None
         self._new_dropdowns()
         # Si hay un filtro activo, el proyecto nuevo propone ese tipo
         self.dd_tipo.value = self.filtro
         self.txt_nombre.value = ""
         self.txt_descripcion.value = ""
         self.campo_inicio.set_value(date.today())
-        self.registro = None
+        self.campo_fin.set_value(date.today())
+        self.sw_destacado.value = False
         self.modo = "nuevo"
         self._apply_mode()
 
@@ -291,11 +362,15 @@ class ProjectsView:
             self.page.update()
             return
 
+        estado = self.dd_estado.value or "activo"
         valores = dict(
             nombre=nombre,
             tipo=self.dd_tipo.value,
-            estado=self.dd_estado.value or "activo",
+            estado=estado,
             fecha_inicio=self.campo_inicio.valor,
+            # El modelo la limpia si el estado no es Terminado/Cancelado
+            fecha_fin=self.campo_fin.valor if estado in ESTADOS_CERRADOS else None,
+            destacado=bool(self.sw_destacado.value),
             descripcion=(self.txt_descripcion.value or "").strip() or None,
         )
         try:
@@ -325,6 +400,9 @@ class ProjectsView:
         mensaje = f"¿Seguro que deseas eliminar el proyecto «{pro.nombre}»?"
         if cantidad:
             mensaje += f"\n\nTambién se eliminarán sus {cantidad} entrada(s) y sus adjuntos."
+        tareas = self._pending_tasks(pro.id)
+        if tareas:
+            mensaje += f"\n\nY sus {tareas} tarea(s) de la Agenda."
         return mensaje
 
     def confirm_delete(self, e=None):  # propio

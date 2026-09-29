@@ -3,8 +3,10 @@ Sección "Respaldo" de Configuración.
 
   Carpeta          -> dónde se guardan los zip (p. ej. ~/Respaldos/ControlKraken,
                       que rclone sube a Google Drive)
-  Automático       -> 2 min después de tu último cambio se crea un respaldo
-                      (también al abrir la app si quedaron cambios sin respaldar)
+  Automático       -> cada N horas / días / semanas / meses (tú eliges).
+                      "Próximo respaldo" = último + N × periodo. Solo respalda si
+                      hubo cambios; si la app estaba cerrada cuando tocaba, lo
+                      hace al abrirla.
   Respaldar ahora  -> uno manual
   Restaurar…       -> eliges un zip; tu BD actual se guarda antes en respaldos/
 
@@ -17,16 +19,22 @@ nuevo que lo último que respaldaste/restauraste aquí, avisa:
   [Este equipo es mi base] -> no vuelve a preguntar por ese respaldo
 Mientras el aviso está abierto no corre el automático (para no taparlo).
 
+Drive: una línea dice a qué cuenta de Google sube rclone y si tus respaldos
+ya están arriba (core/drive.py). La app misma sincroniza con rclone (no hace
+falta cron): sube después de cada respaldo, baja lo reciente al abrir, y el
+botón [Sincronizar] hace las dos cosas.
+
 Las preferencias (carpeta, automático, último respaldo) viven en el
 dispositivo (SharedPreferences), NO en la BD: así restaurar no las pisa.
 """
 import asyncio
 import time
+from datetime import datetime
 from pathlib import Path
 
 import flet as ft
 
-from core import backup, database
+from core import backup, database, drive
 from core.storage import human_size
 from core.ui import confirm, notify
 
@@ -34,9 +42,11 @@ CLAVE_CARPETA = "respaldo_carpeta"
 CLAVE_AUTO = "respaldo_auto"
 CLAVE_ULTIMO = "respaldo_ultimo"   # timestamp del último respaldo o restauración aquí
 CLAVE_IGNORADOS = "respaldo_ignorados"  # zips de otro equipo a los que dijiste "no"
+CLAVE_CADA = "respaldo_cada"            # número: cada 15…
+CLAVE_PERIODO = "respaldo_periodo"      # …"dia" | "semana" | "mes" | "hora"
 CARPETA_SUGERIDA = str(Path.home() / "Respaldos" / "ControlKraken")
 
-ESPERA_TRAS_CAMBIO = 120  # segundos sin cambios antes del respaldo automático
+ESPERA_TRAS_CAMBIO = 120  # si toca, espera 2 min sin cambios (no respalda a media captura)
 REVISAR_CADA = 30         # segundos entre revisiones
 
 
@@ -48,14 +58,35 @@ class BackupSection:
         self.carpeta = ""
         self.auto = True
         self.ultimo = 0.0
+        self.cada = 1
+        self.periodo = "dia"
         self.ocupado = False
         self.pausado = False   # True mientras decides sobre un respaldo de otro equipo
         self.ignorados: list[str] = []
 
         self.lbl_carpeta = ft.Text(size=13)
         self.lbl_estado = ft.Text(size=12, color=ft.Colors.OUTLINE)
+        self.lbl_drive = ft.Text("Drive: sin revisar", size=12)
+        self.ico_drive = ft.Icon(ft.Icons.CLOUD_OUTLINED, size=18, color=ft.Colors.OUTLINE)
         self.sw_auto = ft.Switch(label="Respaldo automático", value=True,
                                  on_change=self.toggle_auto)
+        self.txt_cada = ft.TextField(
+            value="1", width=70, dense=True, text_align=ft.TextAlign.CENTER,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            input_filter=ft.InputFilter(regex_string=r"^\d{0,3}$", allow=True),
+            on_blur=self.change_frequency, on_submit=self.change_frequency,
+        )
+        self.dd_periodo = ft.Dropdown(
+            value="dia", width=150, dense=True, on_select=self.change_frequency,
+            options=[ft.DropdownOption(key=k, text=v.capitalize())
+                     for k, v in backup.PERIODOS.items()],
+        )
+        self.lbl_proximo = ft.Text(size=12)
+        self.fila_frecuencia = ft.Column(spacing=4, controls=[
+            ft.Row([ft.Text("Respaldar cada"), self.txt_cada, self.dd_periodo],
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            self.lbl_proximo,
+        ])
         self.btn_respaldar = ft.Button("Respaldar ahora", icon=ft.Icons.BACKUP,
                                        on_click=self.backup_now)
 
@@ -66,7 +97,10 @@ class BackupSection:
                     size=12, color=ft.Colors.OUTLINE),
             ft.Row([ft.Icon(ft.Icons.FOLDER, size=18), ft.Container(self.lbl_carpeta, expand=True),
                     ft.TextButton("Cambiar", on_click=self.pick_folder)]),
+            ft.Row([self.ico_drive, ft.Container(self.lbl_drive, expand=True),
+                    ft.TextButton("Sincronizar", on_click=self.sync_drive)]),
             self.sw_auto,
+            self.fila_frecuencia,
             self.lbl_estado,
             ft.Row(wrap=True, controls=[
                 self.btn_respaldar,
@@ -86,17 +120,32 @@ class BackupSection:
         self.auto = auto is None or str(auto).lower() in ("true", "1")
         self.ultimo = float(await self.prefs.get(CLAVE_ULTIMO) or 0)
         self.ignorados = list(await self.prefs.get(CLAVE_IGNORADOS) or [])
+        self.cada = int(await self.prefs.get(CLAVE_CADA) or 1)
+        periodo = await self.prefs.get(CLAVE_PERIODO)
+        self.periodo = periodo if periodo in backup.PERIODOS else "dia"
         self.sw_auto.value = self.auto
+        self.txt_cada.value, self.dd_periodo.value = str(self.cada), self.periodo
         self._refresh()
         self.page.update()
 
         # Primero se revisa si hay algo que restaurar; DESPUÉS el automático
         # (si respaldara antes, taparía el respaldo del otro equipo)
+        self.pausado = True  # el automático espera a que bajen los de otros equipos
+        self.page.run_task(self._auto_loop)
+        self.page.run_task(self._startup_sync)
+
+    async def _startup_sync(self):  # propio
+        """Al abrir: baja de Drive lo reciente y LUEGO revisa si hay algo que restaurar."""
+        self.lbl_drive.value = "Drive: bajando respaldos recientes…"
+        self.page.update()
+        await asyncio.to_thread(drive.download_recent, self.carpeta)
+        self.pausado = False
+        self._refresh()
         if database.BD_NUEVA:
             self._offer_restore()
         else:
-            self.check_other_device()
-        self.page.run_task(self._auto_loop)
+            self.check_other_device()  # si hay aviso, vuelve a pausar
+        await self.check_drive()
 
     def _refresh(self):  # propio
         """Textos: carpeta y cuándo fue el último respaldo."""
@@ -111,9 +160,76 @@ class BackupSection:
             estado += "\nHay cambios sin respaldar."
         self.lbl_estado.value = estado
 
+        # Próximo respaldo automático
+        self.fila_frecuencia.visible = self.auto
+        proximo = backup.next_backup(self.ultimo, self.cada, self.periodo)
+        if proximo <= datetime.now():
+            cuando = ("ahora (en cuanto termines de capturar)"
+                      if backup.changed_since(self.ultimo) else "cuando haya cambios")
+        else:
+            cuando = f"{proximo:%d/%m/%Y %H:%M}"
+        self.lbl_proximo.value = f"Próximo respaldo: {cuando}"
+
+    async def sync_drive(self, e=None):  # propio
+        """[Sincronizar]: sube lo que falte, baja lo reciente y muestra el estado."""
+        self.lbl_drive.value = "Drive: sincronizando…"
+        self.page.update()
+        error = await asyncio.to_thread(drive.upload, self.carpeta)
+        if not error:
+            error = await asyncio.to_thread(drive.download_recent, self.carpeta)
+        self._refresh()
+        await self.check_drive()
+        if error:
+            notify(self.page, error)
+
+    async def _upload_after_backup(self):  # propio
+        await asyncio.to_thread(drive.upload, self.carpeta)
+        await self.check_drive()
+
+    async def check_drive(self, e=None):  # propio
+        """¿A qué cuenta de Google sube rclone y ya subió lo más reciente?"""
+        self.lbl_drive.value = "Drive: revisando…"
+        self.page.update()
+        estado = await asyncio.to_thread(drive.drive_status)
+
+        if estado.error:
+            icono, color, texto = ft.Icons.CLOUD_OFF, ft.Colors.ORANGE, estado.error
+        else:
+            cuenta = estado.cuenta or "?"
+            if estado.nombre:
+                cuenta += f" ({estado.nombre})"
+            locales = [b.ruta.name for b in backup.list_backups(Path(self.carpeta))]
+            faltan = [n for n in locales if n not in estado.en_drive]
+            if locales and locales[0] in estado.en_drive:
+                icono, color, detalle = ft.Icons.CLOUD_DONE, ft.Colors.GREEN, "al día"
+            elif locales:
+                icono, color = ft.Icons.CLOUD_UPLOAD, ft.Colors.ORANGE
+                detalle = f"{len(faltan)} por subir (toca Sincronizar)"
+            else:
+                icono, color, detalle = ft.Icons.CLOUD_DONE, ft.Colors.OUTLINE, "sin respaldos aún"
+            texto = f"Drive: {cuenta}\n{detalle}"
+        self.ico_drive.icon, self.ico_drive.color = icono, color
+        self.lbl_drive.value = texto
+        self.page.update()
+
     async def toggle_auto(self, e):  # propio
         self.auto = bool(self.sw_auto.value)
         await self.prefs.set(CLAVE_AUTO, self.auto)
+        self._refresh()
+        self.page.update()
+
+    async def change_frequency(self, e=None):  # propio
+        """Cambiaste el número o el periodo: se guarda y se recalcula el próximo."""
+        try:
+            self.cada = max(1, int(self.txt_cada.value or 1))
+        except ValueError:
+            self.cada = 1
+        self.txt_cada.value = str(self.cada)
+        self.periodo = self.dd_periodo.value or "dia"
+        await self.prefs.set(CLAVE_CADA, self.cada)
+        await self.prefs.set(CLAVE_PERIODO, self.periodo)
+        self._refresh()
+        self.page.update()
 
     async def pick_folder(self, e=None):  # propio
         ruta = await self.picker.get_directory_path(
@@ -142,6 +258,7 @@ class BackupSection:
             await asyncio.to_thread(backup.prune, Path(self.carpeta))
             self.ultimo = inicio
             await self.prefs.set(CLAVE_ULTIMO, str(inicio))
+            self.page.run_task(self._upload_after_backup)  # a Drive, en segundo plano
             return ruta
         finally:
             self.ocupado = False
@@ -159,11 +276,13 @@ class BackupSection:
             notify(self.page, f"Respaldo creado: {ruta.name}")
 
     async def _auto_loop(self):  # propio
-        """Cada 30 s: si hubo cambios y ya pasaron 2 min sin más, respalda."""
+        """Cada 30 s: si ya toca (según tu periodicidad), hubo cambios y llevas
+        2 min sin capturar, respalda."""
         while True:
             try:
+                toca = backup.next_backup(self.ultimo, self.cada, self.periodo) <= datetime.now()
                 quieto = time.time() - backup.last_change() >= ESPERA_TRAS_CAMBIO
-                if (self.auto and not self.pausado and quieto
+                if (self.auto and not self.pausado and toca and quieto
                         and backup.changed_since(self.ultimo)):
                     await self._do_backup("automático")
             except Exception:  # noqa: BLE001  (p. ej. carpeta no disponible: se reintenta)

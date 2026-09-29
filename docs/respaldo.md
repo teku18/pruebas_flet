@@ -38,7 +38,14 @@ rclone mkdir gdrive:ControlKraken
 rclone lsd gdrive:            # debe aparecer ControlKraken
 ```
 
-## 2. Subida automática (cron)
+## 2. Subida a Drive: la hace la app
+
+Ya no hace falta cron. Con rclone configurado (paso 1), la app:
+- **sube** cada respaldo en cuanto lo crea,
+- al abrir **baja** los respaldos de las últimas 24 h (los de otros equipos),
+- con **Sincronizar** (Configuración → Respaldo) hace las dos cosas a mano.
+
+### (Opcional) cron, para que suba aunque la app esté cerrada
 
 ```bash
 crontab -e
@@ -55,7 +62,7 @@ La 1.ª sube tus respaldos. La 2.ª baja los de las últimas 24 h hechos en otro
 equipos: así la app puede avisarte "hay un respaldo más reciente de otro equipo".
 
 `copy` solo copia lo nuevo y **nunca borra** en Drive. La limpieza de la app
-(últimos 5 + uno por mes) aplica solo a la carpeta local; en Drive se acumulan
+(últimos 5 + uno por mes + lo de las últimas 24 h) aplica solo a la carpeta local; en Drive se acumulan
 (pesan pocos KB). Si quieres que Drive quede igual que la carpeta, usa `sync`
 en lugar de `copy` (cuidado: si borras la carpeta local, también se borra en Drive).
 
@@ -64,8 +71,12 @@ Subir en este momento: `rclone copy ~/Respaldos/ControlKraken gdrive:ControlKrak
 ## 3. En la app
 
 Configuración → Respaldo:
+- **Drive**: correo de la cuenta a la que sube rclone y si ya está "al día"
+  (si dice otra cuenta: `rclone config reconnect gdrive:`)
 - **Carpeta**: `~/Respaldos/ControlKraken` (la de arriba)
-- **Automático**: 2 min después de tu último cambio crea un zip
+- **Automático**: "Respaldar cada [N] [Horas/Días/Semanas/Meses]" y ves el
+  **Próximo respaldo**. Solo respalda si hubo cambios; si la app estaba cerrada
+  cuando tocaba, lo hace al abrirla
 - **Respaldar ahora** / **Restaurar…**
 
 ## 4. Equipo nuevo

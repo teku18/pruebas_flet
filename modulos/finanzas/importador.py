@@ -56,6 +56,8 @@ COLUMNAS = {
 }
 OBLIGATORIAS = {"inversion", "monto", "plataforma", "fecha", "direccion"}
 PALABRAS_RENDIMIENTO = ("ganancia", "rendimiento", "interes")
+# Hojas que no son periodos: "Reporte" la agrega el exportador (gráficas)
+HOJAS_IGNORADAS = {"reporte"}
 
 # Columna opcional "Tipo": si viene, manda sobre las reglas automáticas
 TIPOS_EXCEL = {
@@ -229,6 +231,8 @@ def import_workbook(ruta: str) -> ImportResult:  # propio
         hojas = []
         for hoja in libro.worksheets:
             nombre = hoja.title.strip()
+            if _normalize(nombre) in HOJAS_IGNORADAS:
+                continue  # así un Excel exportado se reimporta sin avisos
             try:
                 filas, errores = _read_sheet(hoja)
             except ValueError as ex:

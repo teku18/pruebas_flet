@@ -1,5 +1,72 @@
 # Cambios de ControlKraken
 
+## 0.8.0 — 2026-09-29
+
+### Nuevo
+- **Agenda** (ya no dice "Próximamente"): tareas **con o sin proyecto**.
+  - Fecha, horario opcional (sin hora = todo el día) y frecuencia: una vez,
+    diario, lunes a viernes, cada semana o cada mes.
+  - **Chismoso** (pestaña Hoy): 🔴 vencidas, 🟡 hoy, ⚪ mañana, 🟢 hechas hoy y
+    los proyectos que llevan 14+ días sin avance.
+  - Tocar ○ la marca hecha; una recurrente salta a su siguiente fecha **desde la
+    que tocaba** (si debes dos rentas, marcar una vez solo paga la primera).
+    Tocar ✓ en "Hechas hoy" lo deshace.
+  - Si la tarea es de un proyecto, ofrece registrar el avance en su bitácora.
+  - Pestaña **Todas**: todas las pendientes, de la más próxima a la más lejana.
+  - En la tarea: [Marcar hecha] e **historial** ("28 sept (tocaba 25 sept)").
+- `TimeField` en `core/ui.py`: campo de hora opcional, como `DateField`.
+- Proyectos: la ficha muestra sus tareas pendientes; al borrar un proyecto
+  también se borran sus tareas.
+
+### Base de datos
+- 0008: tablas `tareas` y `tarea_cumplimientos`.
+
+## 0.7.2 — 2026-09-28
+
+### Cambios
+- **La app sube a Drive sola** (vía rclone): después de cada respaldo, y al abrir baja
+  los respaldos recientes de otros equipos. Ya no depende de cron.
+- Botón **Sincronizar** (antes Verificar): sube lo que falte, baja lo reciente y
+  muestra la cuenta y el estado; si algo falla, dice por qué.
+
+## 0.7.1 — 2026-09-28
+
+### Cambios
+- **Periodicidad del respaldo automático** (Configuración → Respaldo):
+  "Respaldar cada [N] [Horas | Días | Semanas | Meses]" y **Próximo respaldo**
+  (último + N × periodo). Antes era 2 min después de cada cambio.
+  Solo respalda si hubo cambios; si la app estaba cerrada cuando tocaba, lo hace
+  al abrirla. Por defecto: cada 1 día.
+
+## 0.7.0 — 2026-09-27
+
+### Nuevo
+- **Proyectos: seguimiento**
+  - Estado **Cancelado**, además de Activo, En pausa y Terminado.
+  - **Fecha de fin**: aparece al pasar a Terminado/Cancelado (propone hoy); al
+    regresar a Activo/En pausa se limpia sola.
+  - **Destacado** ⭐: los proyectos que quieres en el resumen del año.
+  - La lista muestra la **duración** ("3 meses") y, si un proyecto activo lleva
+    14 días o más sin avance, **⚠ N días sin avance** en naranja.
+  - Ficha del proyecto: cuánto duró / lleva, entradas, hitos y último avance.
+- **Bitácora: tipo de entrada** — Avance, **Hito** ⭐, Problema o Cierre.
+  Los hitos se resaltan en ámbar y el chip **Solo hitos** muestra la línea de tiempo.
+- `modulos/proyectos/services.py`: duración, última actividad y días sin avance
+  (calculados, no se guardan), más `stalled_projects()` para el futuro chismoso
+  de la Agenda y `year_highlights(año)` para el futuro resumen del año.
+
+### Base de datos
+- 0007: `proyectos.fecha_fin`, `proyectos.destacado`, `proyectos.creado_en` y
+  `proyecto_entradas.tipo`. Los terminados que ya existen toman como fecha fin
+  su última entrada; todas las entradas existentes quedan como "Avance".
+
+## 0.6.2 — 2026-09-27
+
+### Nuevo
+- Configuración → Respaldo muestra **a qué cuenta de Google Drive** sube rclone
+  (correo y nombre) y si tus respaldos ya están arriba ("al día" / "N por subir").
+  Se revisa al abrir, al respaldar y con [Verificar]. Nuevo `core/drive.py`.
+
 ## 0.6.1 — 2026-09-27
 
 ### Nuevo

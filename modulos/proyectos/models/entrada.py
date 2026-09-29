@@ -2,11 +2,20 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
+from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload, validates
 
 from core.database import Base, SessionLocal
 from core.mixins import CrudMixin
 from core.storage import delete_file
+
+# Tipo de entrada. Los HITOS son los momentos importantes: con ellos se arma
+# la línea de tiempo y el resumen del año; lo demás es el día a día.
+TIPO_ENTRADA_SELECTION = {
+    "avance": "Avance",
+    "hito": "Hito",
+    "problema": "Problema",
+    "cierre": "Cierre",
+}
 
 
 class Entrada(CrudMixin, Base):
@@ -17,19 +26,30 @@ class Entrada(CrudMixin, Base):
     proyecto_id: Mapped[int] = mapped_column(ForeignKey("proyectos.id"), nullable=False)
     fecha_hora: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     notas: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, default="avance")  # Selection
 
     proyecto: Mapped["Proyecto"] = relationship(back_populates="entradas")  # noqa: F821
     adjuntos: Mapped[list["Adjunto"]] = relationship(
         back_populates="entrada", cascade="all, delete-orphan"
     )
 
+    @validates("tipo")
+    def _validate_tipo(self, key, value):  # propio
+        if value not in TIPO_ENTRADA_SELECTION:
+            raise ValueError(f"Tipo de entrada no válido: {value}")
+        return value
+
+    @property
+    def tipo_label(self) -> str:  # propio
+        return TIPO_ENTRADA_SELECTION.get(self.tipo, self.tipo)
+
     def _validate(self) -> None:  # propio
         if not (self.notas or "").strip():
             raise ValueError("La entrada necesita notas")
 
     @classmethod
-    def search_by_project(cls, proyecto_id: int) -> list["Entrada"]:  # propio
-        """Entradas de un proyecto con sus adjuntos ya cargados."""
+    def search_by_project(cls, proyecto_id: int, tipo: str | None = None) -> list["Entrada"]:  # propio
+        """Entradas de un proyecto (todas, o solo de un tipo) con sus adjuntos ya cargados."""
         from sqlalchemy import select, text
 
         with SessionLocal() as session:
@@ -39,6 +59,8 @@ class Entrada(CrudMixin, Base):
                 .options(selectinload(cls.adjuntos))
                 .order_by(text(cls._order_sql()))
             )
+            if tipo:
+                consulta = consulta.where(cls.tipo == tipo)
             return list(session.scalars(consulta))
 
     @classmethod

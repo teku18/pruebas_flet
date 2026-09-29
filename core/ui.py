@@ -1,5 +1,5 @@
 """Piezas de interfaz que comparten varias pantallas y módulos."""
-from datetime import date
+from datetime import date, time
 
 import flet as ft
 
@@ -215,4 +215,59 @@ class DateField:
         if e.control.value:
             valor = e.control.value
             self.set_value(valor.date() if hasattr(valor, "date") else valor)
+            self.page.update()
+
+
+class TimeField:
+    """
+    Campo de hora OPCIONAL: TextField de solo lectura + TimePicker + botón ✕.
+    Sin hora = "todo el día".
+
+    Uso (igual que DateField):
+        campo = TimeField(page, "Hora de inicio")
+        campo.fila             -> control para el formulario
+        campo.valor            -> time o None
+        campo.set_value(t)     -> cambia la hora (None la borra)
+        campo.set_enabled(False) -> modo lectura
+    """
+
+    def __init__(self, page: ft.Page, etiqueta: str):
+        self.page = page
+        self.valor: time | None = None
+        self.activo = True
+        self.txt = ft.TextField(
+            label=etiqueta,
+            hint_text="Todo el día",
+            read_only=True,
+            suffix=ft.Icon(ft.Icons.ACCESS_TIME),
+            on_click=self.open,
+        )
+        self.picker = ft.TimePicker(
+            hour_format=ft.TimePickerHourFormat.H24, on_change=self._on_change
+        )
+        self.btn_borrar = ft.IconButton(ft.Icons.CLEAR, tooltip="Quitar hora",
+                                        on_click=self.clear)
+        self.fila = ft.Row([ft.Container(self.txt, expand=True), self.btn_borrar])
+
+    def set_value(self, valor: time | None):  # propio
+        self.valor = valor
+        self.txt.value = f"{valor:%H:%M}" if valor else ""
+
+    def set_enabled(self, activo: bool):  # propio
+        self.activo = activo
+        self.btn_borrar.visible = activo
+
+    def open(self, e=None):  # propio
+        if not self.activo:
+            return
+        self.picker.value = self.valor or time(9, 0)
+        self.page.show_dialog(self.picker)
+
+    def clear(self, e=None):  # propio
+        self.set_value(None)
+        self.page.update()
+
+    def _on_change(self, e):  # propio
+        if e.control.value:
+            self.set_value(e.control.value.replace(second=0, microsecond=0))
             self.page.update()

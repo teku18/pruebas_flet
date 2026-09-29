@@ -5,7 +5,8 @@ Estructura del proyecto:
   core/                 -> lo compartido: BD, CrudMixin, UI común, temas, inicio
   modulos/finanzas/     -> Periodo, Movimiento y sus pantallas
   modulos/memorias/     -> (próximamente) pensamientos por voz
-  modulos/agenda/       -> (próximamente) pendientes / chismoso
+  modulos/proyectos/    -> proyectos y su bitácora de avances
+  modulos/agenda/       -> tareas (con o sin proyecto) y el chismoso del día
   modulos/configuracion -> modo claro/oscuro y color de la app
 
 Convención: los métodos y funciones marcados con  # propio  son nuestros;
