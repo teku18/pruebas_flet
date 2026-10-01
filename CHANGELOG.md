@@ -1,5 +1,37 @@
 # Cambios de ControlKraken
 
+## 1.0.0 — 2026-10-01 · Primera versión para el celular (APK)
+
+### Nuevo
+- **APK de Android**: `pyproject.toml` (configuración de `flet build`) y
+  `scripts/build_apk.sh` (APK firmado con tu llave; versión desde
+  `APP_VERSION`, número de build = número de commits). Guía: `docs/apk.md`.
+
+### Cambios
+- **Datos en el celular**: instalada en Android, la BD, `data/` y `respaldos/`
+  viven en la carpeta privada de la app (no se borran al actualizar el APK).
+  En la compu todo sigue junto a `main.py` (aunque `flet run` defina
+  `FLET_APP_STORAGE_DATA`).
+- Alembic encuentra las migraciones aunque el paquete traiga solo `.pyc`
+  (`sourceless`).
+- El APK NO incluye tus datos (`ControlKraken.db`, `data/`, `respaldos/`) ni
+  `docs/` ni `scripts/`.
+- `.gitignore`: llaves de firma (`*.jks`, `*.keystore`).
+- La BD ahora se llama `ControlKraken.db` (antes `movimientos.db`). Restaurar
+  acepta los respaldos viejos que la traen con el nombre anterior.
+
+### Pendiente conocido
+- En el celular no hay subida a Drive (rclone no existe en Android): los
+  respaldos quedan dentro de la app. Siguiente paso: login con Google.
+
+## 0.14.2 — 2026-10-01
+
+### Cambios
+- **Nuevo logo e ícono**: el pulpo con lentes en su tazón de ramen.
+  - `assets/icon.png` (1024×1024, sin texto, esquinas transparentes): ícono de
+    la app y del encabezado del inicio.
+  - `assets/logo.png` (con el nombre ControlKraken): README.
+
 ## 0.14.1 — 2026-09-30
 
 ### Arreglos

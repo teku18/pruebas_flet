@@ -3,7 +3,7 @@ Respaldo y restauración de ControlKraken.
 
 Un respaldo es UN zip:
   ControlKraken_2026-09-27_185012.zip
-    ├─ movimientos.db   copia segura de la BD (API de respaldo de SQLite,
+    ├─ ControlKraken.db   copia segura de la BD (API de respaldo de SQLite,
     │                   funciona aunque la app esté abierta)
     ├─ data/...         adjuntos de Proyectos (lo que no vive en la BD)
     └─ manifest.json    versión de la app, migración, fecha, equipo y motivo
@@ -36,11 +36,11 @@ from pathlib import Path
 from alembic.script import ScriptDirectory
 
 from core import APP_VERSION
-from core.database import DB_PATH, ROOT_DIR, alembic_config, engine
+from core.database import DATA_ROOT, DB_NOMBRES_ANTERIORES, DB_PATH, alembic_config, engine
 from core.storage import DATA_DIR
 
 PREFIJO = "ControlKraken_"
-LOCAL_DIR = ROOT_DIR / "respaldos"     # copias de seguridad automáticas locales
+LOCAL_DIR = DATA_ROOT / "respaldos"    # copias de seguridad automáticas locales
 MANIFEST = "manifest.json"
 CONSERVAR_ULTIMOS = 5
 CONSERVAR_MESES = 12
@@ -237,12 +237,23 @@ def backup_before_migrate() -> Path | None:  # propio
 # ============================================================================
 # Restaurar
 # ============================================================================
+def db_in_zip(nombres) -> str | None:  # propio
+    """
+    Nombre de la BD dentro del zip: la actual (ControlKraken.db) o, en
+    respaldos viejos, la de antes (movimientos.db). None si no trae ninguna.
+    """
+    for nombre in (DB_PATH.name, *DB_NOMBRES_ANTERIORES):
+        if nombre in nombres:
+            return nombre
+    return None
+
+
 def read_manifest(zip_path: Path) -> dict:  # propio
     """Valida el zip y regresa su manifest. Lanza ValueError con el motivo."""
     try:
         with zipfile.ZipFile(zip_path) as z:
             nombres = set(z.namelist())
-            if DB_PATH.name not in nombres:
+            if db_in_zip(nombres) is None:
                 raise ValueError("el archivo no contiene una base de datos de ControlKraken")
             manifest = json.loads(z.read(MANIFEST)) if MANIFEST in nombres else {}
     except zipfile.BadZipFile as ex:
@@ -271,9 +282,10 @@ def restore_backup(zip_path: Path) -> dict:  # propio
     engine.dispose()  # suelta las conexiones abiertas a la BD actual
     with tempfile.TemporaryDirectory() as tmp, zipfile.ZipFile(zip_path) as z:
         z.extractall(tmp)
-        # BD: se copia junto y se renombra encima (reemplazo en un solo paso)
+        # BD: se copia junto y se renombra encima (reemplazo en un solo paso).
+        # Un respaldo viejo la trae como movimientos.db: queda como ControlKraken.db
         nueva = DB_PATH.with_suffix(".restaurando")
-        shutil.copy2(Path(tmp) / DB_PATH.name, nueva)
+        shutil.copy2(Path(tmp) / db_in_zip(z.namelist()), nueva)
         nueva.replace(DB_PATH)
         # Adjuntos
         shutil.rmtree(DATA_DIR, ignore_errors=True)

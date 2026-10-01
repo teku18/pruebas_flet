@@ -1,0 +1,51 @@
+# Configuración del proyecto para empaquetar con `flet build` (APK, etc.).
+# En la compu se sigue usando requirements.txt (pip install -r requirements.txt).
+# Para generar el APK: ./scripts/build_apk.sh  (ver docs/apk.md)
+
+[project]
+name = "controlkraken"
+version = "1.0.0"            # la versión real la pone el script desde core/APP_VERSION
+description = "Tu vida, bajo control"
+requires-python = ">=3.12"
+# Lo que se instala DENTRO del APK (sin flet[all]: lo de escritorio no va al celular)
+dependencies = [
+  "flet==1.0.0",
+  "flet-charts==1.0.0",
+  "SQLAlchemy==2.0.54",
+  "alembic==1.20.0",
+  "openpyxl==3.1.5",
+  "Pillow==12.2.0",
+]
+
+[tool.flet]
+org = "com.teku18"            # id de la app: com.teku18.controlkraken (¡no cambiarlo después!)
+product = "ControlKraken"     # nombre que se ve debajo del ícono
+company = "teku18"
+copyright = "Copyright (C) 2026 teku18"
+
+[tool.flet.app]
+path = "."
+# Lo que NO va dentro del APK: tus datos personales y archivos de trabajo
+exclude = [
+  "ControlKraken.db",
+  "movimientos.db",
+  "movimientos_respaldo.db",
+  "data",
+  "respaldos",
+  "docs",
+  "scripts",
+  ".flet",
+  ".venv",
+  ".idea",
+  ".git",
+  "build",
+]
+
+[tool.flet.compile]
+app = false                   # deja los .py (Alembic lee las migraciones como archivos)
+
+[tool.flet.android]
+target_arch = ["arm64-v8a"]   # celulares modernos; APK más ligero
+
+[tool.flet.android.signing]
+key_alias = "upload"          # la ruta y contraseñas de la llave las pone scripts/build_apk.sh

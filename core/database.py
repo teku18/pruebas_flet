@@ -8,6 +8,8 @@ Flujo al abrir la app (init_db):
   3. alembic upgrade head -> aplica las migraciones que falten, sin perder datos
 Si la BD no existía, BD_NUEVA queda en True: la app ofrece restaurar un respaldo.
 """
+import os
+import sys
 from pathlib import Path
 
 from alembic import command
@@ -18,8 +20,25 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 # Raíz del proyecto (core/ está un nivel abajo, por eso .parent.parent)
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
-# El archivo .db vive en la raíz del proyecto, junto a main.py
-DB_PATH = ROOT_DIR / "movimientos.db"
+# ¿Corre INSTALADA en el celular (APK)? Android define ANDROID_ROOT/ANDROID_DATA.
+# Con `flet run` + QR, Python corre en la compu: eso NO cuenta como celular.
+ES_MOVIL = bool(os.getenv("ANDROID_ROOT") or os.getenv("ANDROID_DATA")) or sys.platform in (
+    "android", "ios")
+
+# Dónde viven los DATOS (BD, data/, respaldos/):
+#   compu   -> la raíz del proyecto, como siempre
+#   celular -> la carpeta privada de la app (FLET_APP_STORAGE_DATA), que NO se
+#              borra al actualizar el APK (la carpeta del código sí puede cambiar)
+# Ojo: `flet run` también define FLET_APP_STORAGE_DATA (.flet/storage/data);
+# por eso solo se usa en el celular, si no la BD de la compu "desaparecería".
+_DATOS_APP = os.getenv("FLET_APP_STORAGE_DATA")
+DATA_ROOT = Path(_DATOS_APP) if ES_MOVIL and _DATOS_APP else ROOT_DIR
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
+
+# El archivo .db: en la compu, junto a main.py
+DB_PATH = DATA_ROOT / "ControlKraken.db"
+# Nombre que tenía antes: los respaldos viejos lo traen así (se aceptan al restaurar)
+DB_NOMBRES_ANTERIORES = ("movimientos.db",)
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(DATABASE_URL, echo=False)
@@ -53,6 +72,9 @@ def alembic_config() -> Config:  # propio
     cfg = Config()
     cfg.set_main_option("script_location", str(ROOT_DIR / "alembic"))
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    # En el APK las migraciones pueden quedar como .pyc (sin el .py):
+    # "sourceless" le permite a Alembic encontrarlas igual.
+    cfg.set_main_option("sourceless", "true")
     return cfg
 
 

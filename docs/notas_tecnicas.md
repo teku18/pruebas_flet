@@ -39,6 +39,7 @@ código** (para que lo abras y lo veas funcionando).
 | 26 | [Dibujar con el dedo: `Canvas` + `GestureDetector`](#26-dibujar-con-el-dedo-canvas--gesturedetector) | `desarrollo/views/pincel.py` |
 | 27 | [Arranque frágil: preferencias que no responden](#27-arranque-frágil-preferencias-que-no-responden) | `core/ui.py` → `pref_get()` |
 | 28 | [rclone: subir, consultar y bajar respaldos](#28-rclone-subir-consultar-y-bajar-respaldos) | `core/drive.py`, `docs/respaldo.md` |
+| 29 | [Del código al APK: datos, firma y versiones](#29-del-código-al-apk-datos-firma-y-versiones) | `core/database.py`, `pyproject.toml`, `scripts/build_apk.sh` |
 
 ---
 
@@ -547,6 +548,45 @@ Google vive en `~/.config/rclone/rclone.conf`.
 **Dónde.** `core/drive.py` (`upload`, `download_recent`, `drive_status`);
 guía paso a paso en `docs/respaldo.md`.
 
+## 29. Del código al APK: datos, firma y versiones
+
+**Qué es.** `flet build apk` mete tu código + Python + las dependencias de
+`pyproject.toml` en una app de Android. Tres ideas clave:
+
+**1. El código y los datos van en lugares distintos.**
+
+```
+ APK instalado
+ ├─ carpeta de la app (código)     ← se REEMPLAZA en cada actualización
+ └─ carpeta privada de datos       ← se CONSERVA  (FLET_APP_STORAGE_DATA)
+      ├─ ControlKraken.db
+      ├─ data/  (adjuntos, capturas)
+      └─ respaldos/
+```
+
+Por eso `core/database.py` calcula `DATA_ROOT`: en el celular la carpeta
+privada; en la compu, la del proyecto. Se detecta el celular por las variables
+que Android define (`ANDROID_ROOT`), NO por `FLET_APP_STORAGE_DATA`, porque
+`flet run` en la compu también la define.
+
+**2. La firma.** Android solo acepta una actualización firmada con la misma
+llave (`.jks`). Sin ella → desinstalar → se pierden los datos. Va fuera del
+repo (`~/.claves`) y su contraseña no se guarda en archivos (el script la pide).
+
+**3. Dos números de versión.**
+
+| | Qué es | De dónde sale |
+|---|---|---|
+| `build-version` | lo que ves: 1.0.0 | `APP_VERSION` |
+| `build-number` | entero interno que SIEMPRE debe subir | `git rev-list --count HEAD` |
+
+**Extra:** `pyproject.toml` → `[tool.flet.app].exclude` deja fuera del APK tu
+BD y adjuntos personales; `[tool.flet.compile] app = false` + Alembic
+`sourceless` para que las migraciones se encuentren dentro del paquete.
+
+**Dónde.** `core/database.py` (`ES_MOVIL`, `DATA_ROOT`), `pyproject.toml`,
+`scripts/build_apk.sh`, `docs/apk.md`.
+
 ---
 
 ## Registro de cambios de estas notas
@@ -556,3 +596,4 @@ guía paso a paso en `docs/respaldo.md`.
 | 2026-09-29 | 0.9.0 – 0.13.1 | 1–23 (Desarrollo, calendario, deslizar, marcar desde Día, adjuntos, captura/grabación, Excel, bug de servicios en el celular) |
 | 2026-09-29 | 0.14.0 | 24–26 (área segura del celular, menú con velo, pincel) |
 | 2026-09-30 | 0.14.1 | 27–28 (arranque frágil / preferencias, rclone) |
+| 2026-10-01 | 1.0.0 | 29 (APK: datos, firma y versiones) |

@@ -7,9 +7,9 @@ import shutil
 import uuid
 from pathlib import Path
 
-from core.database import ROOT_DIR
+from core.database import DATA_ROOT
 
-DATA_DIR = ROOT_DIR / "data"
+DATA_DIR = DATA_ROOT / "data"   # compu: junto a main.py · celular: carpeta privada de la app
 
 
 def save_file(origen: Path | None, datos: bytes | None, destino_dir: Path, nombre: str) -> Path:  # propio

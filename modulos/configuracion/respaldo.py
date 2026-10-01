@@ -28,6 +28,7 @@ Las preferencias (carpeta, automático, último respaldo) viven en el
 dispositivo (SharedPreferences), NO en la BD: así restaurar no las pisa.
 """
 import asyncio
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +36,7 @@ from pathlib import Path
 import flet as ft
 
 from core import backup, database, drive
+from core.database import DATA_ROOT, ES_MOVIL
 from core.storage import human_size
 from core.ui import confirm, notify, pref_get, pref_set, service
 
@@ -44,7 +46,12 @@ CLAVE_ULTIMO = "respaldo_ultimo"   # timestamp del último respaldo o restauraci
 CLAVE_IGNORADOS = "respaldo_ignorados"  # zips de otro equipo a los que dijiste "no"
 CLAVE_CADA = "respaldo_cada"            # número: cada 15…
 CLAVE_PERIODO = "respaldo_periodo"      # …"dia" | "semana" | "mes" | "hora"
-CARPETA_SUGERIDA = str(Path.home() / "Respaldos" / "ControlKraken")
+# expanduser no truena aunque el sistema no tenga "home" (celular)
+CASA = os.path.expanduser("~")
+# En el celular no hay ~/Respaldos: los zips quedan en la carpeta privada de la app
+CARPETA_SUGERIDA = str(
+    (DATA_ROOT if ES_MOVIL else Path(CASA)) / "Respaldos" / "ControlKraken"
+)
 
 ESPERA_TRAS_CAMBIO = 120  # si toca, espera 2 min sin cambios (no respalda a media captura)
 REVISAR_CADA = 30         # segundos entre revisiones
@@ -148,7 +155,7 @@ class BackupSection:
 
     def _refresh(self):  # propio
         """Textos: carpeta y cuándo fue el último respaldo."""
-        self.lbl_carpeta.value = self.carpeta.replace(str(Path.home()), "~")
+        self.lbl_carpeta.value = self.carpeta.replace(CASA, "~")
         respaldos = backup.list_backups(Path(self.carpeta))
         if respaldos:
             r = respaldos[0]
