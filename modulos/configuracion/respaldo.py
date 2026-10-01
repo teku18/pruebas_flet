@@ -102,9 +102,9 @@ class BackupSection:
                     "a Drive y podrás restaurarlo en otro equipo.",
                     size=12, color=ft.Colors.OUTLINE),
             ft.Row([ft.Icon(ft.Icons.FOLDER, size=18), ft.Container(self.lbl_carpeta, expand=True),
-                    ft.TextButton("Cambiar", on_click=self.pick_folder)]),
-            ft.Row([self.ico_drive, ft.Container(self.lbl_drive, expand=True),
-                    ft.TextButton("Sincronizar", on_click=self.sync_drive)]),
+                    # En el celular la carpeta es la interna de la app (no se cambia)
+                    ft.TextButton("Cambiar", on_click=self.pick_folder, visible=not ES_MOVIL)]),
+            self._drive_row(),
             self.sw_auto,
             self.fila_frecuencia,
             self.lbl_estado,
@@ -122,6 +122,12 @@ class BackupSection:
         """Al abrir la app: lee preferencias, arranca el automático y, si es un
         equipo nuevo, ofrece restaurar."""
         self.carpeta = await pref_get(self.prefs, CLAVE_CARPETA) or CARPETA_SUGERIDA
+        if ES_MOVIL and self.carpeta != CARPETA_SUGERIDA:
+            # En el celular SIEMPRE la carpeta interna. Si en la 1.0.0 se eligió
+            # otra con "Cambiar" (Android da un identificador, no una ruta:
+            # "/storage/emulated/0/acc=2;doc=encoded=…"), se corrige aquí.
+            self.carpeta = CARPETA_SUGERIDA
+            await pref_set(self.prefs, CLAVE_CARPETA, CARPETA_SUGERIDA)
         auto = await pref_get(self.prefs, CLAVE_AUTO)
         self.auto = auto is None or str(auto).lower() in ("true", "1")
         self.ultimo = float(await pref_get(self.prefs, CLAVE_ULTIMO) or 0)
@@ -142,9 +148,10 @@ class BackupSection:
 
     async def _startup_sync(self):  # propio
         """Al abrir: baja de Drive lo reciente y LUEGO revisa si hay algo que restaurar."""
-        self.lbl_drive.value = "Drive: bajando respaldos recientes…"
-        self.page.update()
-        await asyncio.to_thread(drive.download_recent, self.carpeta)
+        if not ES_MOVIL:  # en el celular no hay rclone
+            self.lbl_drive.value = "Drive: bajando respaldos recientes…"
+            self.page.update()
+            await asyncio.to_thread(drive.download_recent, self.carpeta)
         self.pausado = False
         self._refresh()
         if database.BD_NUEVA:
@@ -153,9 +160,46 @@ class BackupSection:
             self.check_other_device()  # si hay aviso, vuelve a pausar
         await self.check_drive()
 
+    def _drive_row(self) -> ft.Control:  # propio
+        """
+        Compu:   estado de rclone + [Sincronizar]
+        Celular: no hay rclone -> [Guardar copia en…] (Android deja elegir Google Drive)
+        """
+        if ES_MOVIL:
+            self.ico_drive.icon, self.ico_drive.color = ft.Icons.CLOUD_UPLOAD, ft.Colors.PRIMARY
+            self.lbl_drive.value = "Para tenerlo en Drive: «Guardar copia en…» y elige Google Drive."
+            boton = ft.TextButton("Guardar copia en…", on_click=self.save_copy)
+        else:
+            boton = ft.TextButton("Sincronizar", on_click=self.sync_drive)
+        return ft.Row([self.ico_drive, ft.Container(self.lbl_drive, expand=True), boton])
+
+    async def save_copy(self, e=None):  # propio
+        """
+        Celular: manda el respaldo más reciente a donde elijas (Google Drive,
+        Descargas, otra app…) con el selector de Android. Si no hay, lo crea.
+        """
+        respaldos = backup.list_backups(Path(self.carpeta))
+        ruta = respaldos[0].ruta if respaldos else await self._do_backup("manual")
+        if ruta is None:
+            return
+        destino = await service(self.page, ft.FilePicker).save_file(
+            dialog_title="Guardar copia del respaldo",
+            file_name=ruta.name,
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["zip"],
+            src_bytes=ruta.read_bytes(),  # Flet escribe el archivo donde elijas
+        )
+        if destino:
+            notify(self.page, "Copia guardada ✓")
+
     def _refresh(self):  # propio
         """Textos: carpeta y cuándo fue el último respaldo."""
-        self.lbl_carpeta.value = self.carpeta.replace(CASA, "~")
+        if ES_MOVIL:
+            self.lbl_carpeta.value = "Carpeta interna de la app"
+        elif self.carpeta.startswith(CASA + os.sep):
+            self.lbl_carpeta.value = "~" + self.carpeta[len(CASA):]   # solo el inicio
+        else:
+            self.lbl_carpeta.value = self.carpeta
         respaldos = backup.list_backups(Path(self.carpeta))
         if respaldos:
             r = respaldos[0]
@@ -189,11 +233,15 @@ class BackupSection:
             notify(self.page, error)
 
     async def _upload_after_backup(self):  # propio
+        if ES_MOVIL:
+            return
         await asyncio.to_thread(drive.upload, self.carpeta)
         await self.check_drive()
 
     async def check_drive(self, e=None):  # propio
         """¿A qué cuenta de Google sube rclone y ya subió lo más reciente?"""
+        if ES_MOVIL:  # el texto lo pone _drive_row
+            return
         self.lbl_drive.value = "Drive: revisando…"
         self.page.update()
         estado = await asyncio.to_thread(drive.drive_status)
@@ -377,10 +425,21 @@ class BackupSection:
             initial_directory=self.carpeta,
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["zip"],
+            with_data=True,  # desde el celular o Drive no hay ruta: llega el contenido
         )
-        if not archivos or not archivos[0].path:
+        if not archivos:
             return
-        ruta = Path(archivos[0].path)
+        elegido = archivos[0]
+        if elegido.path and Path(elegido.path).exists():
+            ruta = Path(elegido.path)
+        elif elegido.bytes:
+            # Se guarda una copia local para restaurar desde ahí
+            backup.LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+            ruta = backup.LOCAL_DIR / f"importado_{elegido.name}"
+            ruta.write_bytes(elegido.bytes)
+        else:
+            notify(self.page, "No se pudo leer el archivo elegido")
+            return
         try:
             m = backup.read_manifest(ruta)
         except ValueError as ex:
@@ -403,6 +462,9 @@ class BackupSection:
         except Exception as ex:  # noqa: BLE001
             notify(self.page, f"No se pudo restaurar: {ex}")
             return
+        finally:
+            if ruta.name.startswith("importado_"):  # copia temporal del zip elegido
+                ruta.unlink(missing_ok=True)
         # Lo restaurado ya está en la carpeta: no hace falta respaldarlo otra vez
         self.ultimo = time.time()
         await pref_set(self.prefs, CLAVE_ULTIMO, str(self.ultimo))

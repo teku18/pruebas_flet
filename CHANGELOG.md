@@ -1,5 +1,22 @@
 # Cambios de ControlKraken
 
+## 1.0.1 — 2026-10-01
+
+### Arreglos (celular)
+- "Sincronizar" daba error (rclone no existe en Android). En el celular ahora
+  es **«Guardar copia en…»**: manda el respaldo más reciente a donde elijas con
+  el selector de Android (Google Drive, Descargas…), sin login.
+- **Restaurar** acepta un zip elegido desde Drive u otra app (llega su
+  contenido, no una ruta); se guarda una copia temporal y se borra al terminar.
+- La carpeta se mostraba como `~/user/0/…/files~/Respaldos`: en el celular dice
+  "Carpeta interna de la app" y "Cambiar" se oculta. En la compu, `~` solo
+  reemplaza el inicio de la ruta.
+- En el celular ya no se llama a rclone al abrir ni después de respaldar.
+- "No se pudo respaldar: Permission denied '/storage/emulated/0/acc=2;doc=…'":
+  en la 1.0.0 "Cambiar" guardaba el identificador que da Android (no es una
+  carpeta). Ahora en el celular siempre se usa la carpeta interna y, si había
+  otra guardada, se corrige sola al abrir.
+
 ## 1.0.0 — 2026-10-01 · Primera versión para el celular (APK)
 
 ### Nuevo

@@ -62,12 +62,15 @@ igual que en la compu.
 |---|---|---|
 | BD y `data/` | junto a `main.py` | carpeta privada de la app (`FLET_APP_STORAGE_DATA`) |
 | Respaldos `.zip` | `~/Respaldos/ControlKraken` | dentro de la carpeta privada |
-| Subir a Drive | rclone ✓ | ✗ (rclone no existe en Android) — pendiente: login con Google |
+| Subir a Drive | rclone ✓ (automático) | «Guardar copia en…» → eliges Google Drive (manual) |
 | Captura / grabación | ✓ | ✓ |
 
-**Pasar tus datos de la compu al celular:** en la compu *Respaldar ahora* → pasa
-el `.zip` al celular → en la app del celular *Configuración → Respaldo →
-Restaurar…* y elígelo.
+**Pasar tus datos de la compu al celular:** en la compu *Respaldar ahora* (rclone
+lo sube a Drive) → en el celular *Configuración → Respaldo → Restaurar…* y elige
+el zip directo desde Google Drive.
+
+**Del celular a Drive:** *Guardar copia en…* → Google Drive → carpeta
+ControlKraken. Así la compu lo ve en la siguiente sincronización.
 
 ## Si algo falla al compilar
 
