@@ -49,3 +49,10 @@ target_arch = ["arm64-v8a"]   # celulares modernos; APK más ligero
 
 [tool.flet.android.signing]
 key_alias = "upload"          # la ruta y contraseñas de la llave las pone scripts/build_apk.sh
+
+# Ajustes de paquetes de Flutter (los aplica flet build al pubspec.yaml).
+# jni_flutter 1.0.4 pide jni >= 1.1, pero la plantilla de Flet 1.0.0 fija jni 1.0.0
+# -> "The generated bindings expect package:jni ^1.1.0, but 1.0.x was imported".
+# Se usa la versión anterior de jni_flutter, compatible con jni 1.0.0.
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni_flutter = ">=1.0.0 <1.0.4"

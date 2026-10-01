@@ -28,7 +28,20 @@ VERSION=$(python -c "from core import APP_VERSION; print(APP_VERSION)")
 BUILD=$(git rev-list --count HEAD)
 echo "→ ControlKraken $VERSION (build $BUILD)"
 
-flet build apk --build-version "$VERSION" --build-number "$BUILD"
+# Todo lo que imprime el build también queda en build_apk.log (para revisar errores).
+# Extras: ./scripts/build_apk.sh -v   (más detalle)
+LOG="build_apk.log"
+echo "→ registro completo en $LOG"
+set +e
+flet build apk --build-version "$VERSION" --build-number "$BUILD" "$@" 2>&1 | tee "$LOG"
+ESTADO=${PIPESTATUS[0]}
+set -e
+if [[ $ESTADO -ne 0 ]]; then
+  echo
+  echo "✗ Falló el build. Las líneas con 'error' del registro:"
+  grep -n -i -E "error|exception|failed" "$LOG" | grep -v -i "0 errors" | head -40
+  exit "$ESTADO"
+fi
 
 echo
 echo "✓ Listo:"

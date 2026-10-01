@@ -51,3 +51,6 @@ respaldos/
 # Llaves de firma del APK (NUNCA a git; viven en ~/.claves)
 *.jks
 *.keystore
+
+# Registro del último build del APK
+build_apk.log
