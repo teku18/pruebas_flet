@@ -7,6 +7,7 @@ Si tiene modelos, agrégalo también en core/database.py -> import_models().
 """
 from modulos.agenda import AgendaModule
 from modulos.configuracion import ConfiguracionModule
+from modulos.desarrollo import DesarrolloModule
 from modulos.finanzas import FinanzasModule
 from modulos.memorias import MemoriasModule
 from modulos.proyectos import ProyectosModule
@@ -16,5 +17,6 @@ MODULES = [
     ProyectosModule,
     MemoriasModule,
     AgendaModule,
+    DesarrolloModule,
     ConfiguracionModule,
 ]

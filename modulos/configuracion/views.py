@@ -16,6 +16,7 @@ from core.themes import (
     apply_color,
     apply_mode,
 )
+from core.ui import pref_get, pref_set
 from modulos.configuracion.respaldo import BackupSection
 
 CLAVE_MODO = "tema"    # se conserva la clave anterior para no perder tu elección
@@ -128,7 +129,7 @@ class SettingsView:
     async def change_color(self, clave: str):  # propio
         self._set_color(clave)
         self.page.update()
-        await self.prefs.set(CLAVE_COLOR, clave)
+        await pref_set(self.prefs, CLAVE_COLOR, clave)
 
     # ==================================================================
     # Modo claro / oscuro
@@ -141,13 +142,13 @@ class SettingsView:
         valor = self.seg_modo.selected[0]
         self._set_mode(valor)
         self.page.update()
-        await self.prefs.set(CLAVE_MODO, valor)
+        await pref_set(self.prefs, CLAVE_MODO, valor)
 
     # ==================================================================
     async def load_saved(self):  # propio
         """Aplica el modo y el color que el usuario eligió la última vez."""
-        modo = await self.prefs.get(CLAVE_MODO)
-        color = await self.prefs.get(CLAVE_COLOR)
+        modo = await pref_get(self.prefs, CLAVE_MODO)
+        color = await pref_get(self.prefs, CLAVE_COLOR)
         self._set_mode(modo if modo in THEME_MODES else DEFAULT_MODE)
         self._set_color(color if color in THEME_COLORS else DEFAULT_COLOR)
         self.page.update()

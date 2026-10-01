@@ -1,8 +1,9 @@
 """
-Pantalla principal de la Agenda (/agenda), con dos pestañas:
+Pantalla principal de la Agenda (/agenda), con tres pestañas:
 
-  [Hoy]    el chismoso: lo vencido, lo de hoy, lo de mañana y lo que ya hiciste
-  [Todas]  todas las tareas pendientes, de la más próxima a la más lejana
+  [Hoy]         el chismoso: lo vencido, lo de hoy, lo de mañana y lo que ya hiciste
+  [Todas]       todas las tareas pendientes, de la más próxima a la más lejana
+  [Calendario]  cuántas tareas hay por día, semana, mes o año (views/calendario.py)
 
 Esta pantalla NO calcula nada: le pide a services.gossip() la lista ya
 clasificada y solo la pinta (la vista pregunta y pinta, la lógica decide).
@@ -20,6 +21,7 @@ from core.ui import add_button, notify, short_date, swipe_to_delete
 from modulos.agenda import services
 from modulos.agenda.models import Cumplimiento, Tarea
 from modulos.agenda.routes import BASE
+from modulos.agenda.views.calendario import CalendarPanel
 
 # Color de cada grupo (el color ES el mensaje: rojo = ya se te quemó)
 COLOR_VENCIDA = ft.Colors.RED
@@ -36,7 +38,8 @@ class AgendaView:
         """
         self.page = page
         self.on_open_task = on_open_task
-        self.pestana = "hoy"  # "hoy" | "todas"
+        self.pestana = "hoy"  # "hoy" | "todas" | "calendario"
+        self.calendario = CalendarPanel(page, on_open_task=on_open_task, on_change=self.refresh)
 
         self.fila_pestanas = ft.Row(spacing=6)
         self.lista = ft.ListView(expand=True, spacing=6, padding=ft.Padding.only(bottom=90))
@@ -63,7 +66,7 @@ class AgendaView:
                 selected=self.pestana == clave,
                 on_select=lambda e, c=clave: self.set_tab(c),
             )
-            for clave, texto in (("hoy", "Hoy"), ("todas", "Todas"))
+            for clave, texto in (("hoy", "Hoy"), ("todas", "Todas"), ("calendario", "Calendario"))
         ]
 
     def set_tab(self, pestana: str):  # propio
@@ -75,8 +78,10 @@ class AgendaView:
     def load(self):  # propio
         if self.pestana == "hoy":
             self.lista.controls = self._today_controls()
-        else:
+        elif self.pestana == "todas":
             self.lista.controls = self._all_controls()
+        else:
+            self.lista.controls = self.calendario.controls()
 
     # ==================================================================
     # [Hoy] el chismoso

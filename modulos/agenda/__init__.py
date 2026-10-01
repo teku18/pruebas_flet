@@ -2,13 +2,13 @@
 Módulo Agenda: tareas (con o sin proyecto) y el "chismoso" del día.
 
 Navegación (encima de la pantalla de inicio):
-  /agenda        -> Agenda: pestañas [Hoy] (chismoso) y [Todas]
+  /agenda        -> Agenda: pestañas [Hoy] (chismoso), [Todas] y [Calendario]
   /agenda/tarea  -> Agenda > Tarea (nueva, ver o editar)
 
 Capas:
   models/     Tarea, Cumplimiento           (la despensa)
-  services.py gossip, complete, next_date   (el cocinero)
-  views/      AgendaView, TaskFormView      (el mesero)
+  services.py gossip, complete, next_date, occurrences   (el cocinero)
+  views/      AgendaView, CalendarPanel, TaskFormView    (el mesero)
 """
 import flet as ft
 

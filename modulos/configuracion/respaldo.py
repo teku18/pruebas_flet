@@ -36,7 +36,7 @@ import flet as ft
 
 from core import backup, database, drive
 from core.storage import human_size
-from core.ui import confirm, notify
+from core.ui import confirm, notify, pref_get, pref_set, service
 
 CLAVE_CARPETA = "respaldo_carpeta"
 CLAVE_AUTO = "respaldo_auto"
@@ -54,7 +54,6 @@ class BackupSection:
     def __init__(self, page: ft.Page, prefs: ft.SharedPreferences):
         self.page = page
         self.prefs = prefs
-        self.picker = ft.FilePicker()
         self.carpeta = ""
         self.auto = True
         self.ultimo = 0.0
@@ -115,13 +114,13 @@ class BackupSection:
     async def load(self):  # propio
         """Al abrir la app: lee preferencias, arranca el automático y, si es un
         equipo nuevo, ofrece restaurar."""
-        self.carpeta = await self.prefs.get(CLAVE_CARPETA) or CARPETA_SUGERIDA
-        auto = await self.prefs.get(CLAVE_AUTO)
+        self.carpeta = await pref_get(self.prefs, CLAVE_CARPETA) or CARPETA_SUGERIDA
+        auto = await pref_get(self.prefs, CLAVE_AUTO)
         self.auto = auto is None or str(auto).lower() in ("true", "1")
-        self.ultimo = float(await self.prefs.get(CLAVE_ULTIMO) or 0)
-        self.ignorados = list(await self.prefs.get(CLAVE_IGNORADOS) or [])
-        self.cada = int(await self.prefs.get(CLAVE_CADA) or 1)
-        periodo = await self.prefs.get(CLAVE_PERIODO)
+        self.ultimo = float(await pref_get(self.prefs, CLAVE_ULTIMO) or 0)
+        self.ignorados = list(await pref_get(self.prefs, CLAVE_IGNORADOS) or [])
+        self.cada = int(await pref_get(self.prefs, CLAVE_CADA) or 1)
+        periodo = await pref_get(self.prefs, CLAVE_PERIODO)
         self.periodo = periodo if periodo in backup.PERIODOS else "dia"
         self.sw_auto.value = self.auto
         self.txt_cada.value, self.dd_periodo.value = str(self.cada), self.periodo
@@ -214,7 +213,7 @@ class BackupSection:
 
     async def toggle_auto(self, e):  # propio
         self.auto = bool(self.sw_auto.value)
-        await self.prefs.set(CLAVE_AUTO, self.auto)
+        await pref_set(self.prefs, CLAVE_AUTO, self.auto)
         self._refresh()
         self.page.update()
 
@@ -226,19 +225,19 @@ class BackupSection:
             self.cada = 1
         self.txt_cada.value = str(self.cada)
         self.periodo = self.dd_periodo.value or "dia"
-        await self.prefs.set(CLAVE_CADA, self.cada)
-        await self.prefs.set(CLAVE_PERIODO, self.periodo)
+        await pref_set(self.prefs, CLAVE_CADA, self.cada)
+        await pref_set(self.prefs, CLAVE_PERIODO, self.periodo)
         self._refresh()
         self.page.update()
 
     async def pick_folder(self, e=None):  # propio
-        ruta = await self.picker.get_directory_path(
+        ruta = await service(self.page, ft.FilePicker).get_directory_path(
             dialog_title="Carpeta para los respaldos", initial_directory=self.carpeta
         )
         if not ruta:
             return
         self.carpeta = ruta
-        await self.prefs.set(CLAVE_CARPETA, ruta)
+        await pref_set(self.prefs, CLAVE_CARPETA, ruta)
         self._refresh()
         self.page.update()
 
@@ -257,7 +256,7 @@ class BackupSection:
             ruta = await asyncio.to_thread(backup.create_backup, Path(self.carpeta), motivo)
             await asyncio.to_thread(backup.prune, Path(self.carpeta))
             self.ultimo = inicio
-            await self.prefs.set(CLAVE_ULTIMO, str(inicio))
+            await pref_set(self.prefs, CLAVE_ULTIMO, str(inicio))
             self.page.run_task(self._upload_after_backup)  # a Drive, en segundo plano
             return ruta
         finally:
@@ -353,7 +352,7 @@ class BackupSection:
             self.page.pop_dialog()
             self.pausado = False
             self.ignorados = (self.ignorados + [b.ruta.name])[-20:]
-            await self.prefs.set(CLAVE_IGNORADOS, self.ignorados)
+            await pref_set(self.prefs, CLAVE_IGNORADOS, self.ignorados)
             notify(self.page, "Sigues con los datos de este equipo")
 
         self.page.show_dialog(ft.AlertDialog(
@@ -366,7 +365,7 @@ class BackupSection:
         ))
 
     async def pick_backup(self, e=None):  # propio
-        archivos = await self.picker.pick_files(
+        archivos = await service(self.page, ft.FilePicker).pick_files(
             dialog_title="Elige el respaldo (ControlKraken_….zip)",
             initial_directory=self.carpeta,
             file_type=ft.FilePickerFileType.CUSTOM,
@@ -399,7 +398,7 @@ class BackupSection:
             return
         # Lo restaurado ya está en la carpeta: no hace falta respaldarlo otra vez
         self.ultimo = time.time()
-        await self.prefs.set(CLAVE_ULTIMO, str(self.ultimo))
+        await pref_set(self.prefs, CLAVE_ULTIMO, str(self.ultimo))
         self._refresh()
         notify(self.page, "Datos restaurados")
         self.page.navigate("/")  # al inicio: cada pantalla relee la BD al abrirla

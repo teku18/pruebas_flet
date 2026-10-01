@@ -6,7 +6,7 @@ Ajustes de Finanzas (/finanzas/ajustes), desde el engrane de la lista de periodo
 """
 import flet as ft
 
-from core.ui import notify
+from core.ui import notify, service
 from modulos.finanzas import routes
 from modulos.finanzas.importador import import_workbook
 from modulos.finanzas.models import TIPO_SELECTION, Inversion, Plataforma
@@ -18,7 +18,6 @@ class FinanceSettingsView:
         """on_imported: se llama después de importar (para refrescar la lista de periodos)."""
         self.page = page
         self.on_imported = on_imported
-        self.picker = ft.FilePicker()
 
         self.tile_plataformas = self._tile(
             ft.Icons.ACCOUNT_BALANCE, "Plataformas", routes.PLATAFORMAS
@@ -72,7 +71,7 @@ class FinanceSettingsView:
 
     # --- Importar ---------------------------------------------------------
     async def pick_excel(self, e=None):  # propio
-        archivos = await self.picker.pick_files(
+        archivos = await service(self.page, ft.FilePicker).pick_files(
             dialog_title="Elige el Excel de movimientos",
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["xlsx"],

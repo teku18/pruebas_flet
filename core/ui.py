@@ -1,4 +1,5 @@
 """Piezas de interfaz que comparten varias pantallas y módulos."""
+import asyncio
 from datetime import date, time
 
 import flet as ft
@@ -15,6 +16,68 @@ def short_date(d: date) -> str:  # propio
 def dropdown_options(seleccion: dict) -> list[ft.DropdownOption]:  # propio
     """Convierte un *_SELECTION del modelo en opciones de un Dropdown."""
     return [ft.DropdownOption(key=k, text=v) for k, v in seleccion.items()]
+
+
+def service(page: ft.Page, clase):  # propio
+    """
+    Un servicio de Flet (ft.FilePicker, ft.UrlLauncher…) BIEN SUJETO a la página.
+
+    Por qué: Flet da de baja, después de cada evento, los servicios que "nadie
+    usa" (cuenta referencias y su índice de controles es débil). Uno guardado
+    solo en self.picker queda en el límite y a veces se da de baja mientras
+    esperas el selector de archivos -> "Control with ID … is not registered".
+
+    Aquí se crea al usarlo (cuando la app ya está armada) y se guarda en
+    page.services, la lista de la PRIMERA vista (el Inicio, que nunca se quita).
+    Uno por página, compartido por todos los módulos.
+
+    Uso:  archivos = await service(self.page, ft.FilePicker).pick_files(...)
+    """
+    for existente in page.services:
+        if type(existente) is clase:
+            return existente
+    nuevo = clase()
+    page.services.append(nuevo)
+    return nuevo
+
+
+# Servicios de preferencias que ya no respondieron en esta sesión (por id):
+# no se les vuelve a esperar 10 s en cada lectura.
+_PREFS_MUDOS: set[int] = set()
+
+
+async def pref_get(prefs, clave: str, defecto=None, intentos: int = 2):  # propio
+    """
+    Lee una preferencia guardada SIN tronar la app.
+
+    Al arrancar (sobre todo en el celular) el servicio SharedPreferences puede
+    no estar listo: Flet espera 10 s y lanza "Timeout waiting for invoke method
+    listener". Aquí se reintenta y, si no responde, se usa el valor por defecto
+    (la app abre con lo de fábrica en vez de quedarse a medias). Si ya falló
+    una vez, las siguientes lecturas regresan el defecto al instante.
+    """
+    if id(prefs) in _PREFS_MUDOS:
+        return defecto
+    for intento in range(intentos):
+        try:
+            valor = await prefs.get(clave)
+            return defecto if valor is None else valor
+        except RuntimeError:
+            if intento < intentos - 1:
+                await asyncio.sleep(1)
+    _PREFS_MUDOS.add(id(prefs))
+    return defecto
+
+
+async def pref_set(prefs, clave: str, valor) -> bool:  # propio
+    """Guarda una preferencia; si el servicio no responde, regresa False sin tronar."""
+    if id(prefs) in _PREFS_MUDOS:
+        return False
+    try:
+        await prefs.set(clave, valor)
+        return True
+    except RuntimeError:
+        return False
 
 
 def notify(page: ft.Page, texto: str):  # propio

@@ -1,5 +1,132 @@
 # Cambios de ControlKraken
 
+## 0.14.1 — 2026-09-30
+
+### Arreglos
+- Al abrir la app desde el celular, Configuración podía quedarse esperando sus
+  preferencias ("Timeout waiting for invoke method listener for
+  SharedPreferences") y el respaldo no terminaba de cargar (no se podía
+  restaurar). Ahora:
+  - La herramienta de captura activa `enable_screenshots` hasta la primera
+    captura (antes lo hacía al arrancar y el celular reconstruía la pantalla
+    justo cuando se pedían las preferencias).
+  - Las preferencias se leen con `pref_get()`/`pref_set()` (`core/ui.py`):
+    reintentan y, si no responden, la app abre con los valores de fábrica en
+    vez de tronar.
+
+## 0.14.0 — 2026-09-29
+
+### Nuevo
+- **Pincel para marcar** en las capturas y grabaciones (4 colores, deshacer y
+  borrar trazos):
+  - Menú 📷 → **Marcar y capturar**: dibujas con el dedo y tocas *Capturar*; la
+    foto sale con tus trazos (sin la barra de herramientas).
+  - Grabando: botón **✏️** junto al ■ para encender el pincel; mientras está
+    encendido la app no responde (estás dibujando). Apágalo para seguir usando
+    la app. Los trazos salen en la grabación.
+
+### Cambios
+- El menú de captura ya no es una hoja pegada al borde: es una tarjeta flotante
+  que respeta la barra de botones del celular (`page.media.padding`), un poco
+  más abajo que el "+" de los módulos. El botón 📷 quedó a la misma altura que el "+".
+
+## 0.13.1 — 2026-09-29
+
+### Arreglos
+- **Adjuntar desde el celular** fallaba con "Control with ID … is not registered":
+  Flet daba de baja el `FilePicker` mientras elegías el archivo. Ahora los
+  servicios (`FilePicker`, `UrlLauncher`) se piden con `service()` de
+  `core/ui.py`, que los deja sujetos a la página. Aplicado en adjuntos de
+  Desarrollo y Proyectos, respaldo, importar y exportar Excel.
+- Desde el celular la ruta del archivo es del teléfono: ahora se pide también su
+  contenido (`with_data=True`) y se guarda desde ahí.
+
+### Documentación
+- `docs/notas_tecnicas.md`: conceptos para estudiar (qué es, para qué lo usamos
+  y dónde está en el código). Se irá actualizando con cada cambio.
+
+## 0.13.0 — 2026-09-29
+
+### Nuevo
+- **Desarrollo: adjuntos en los pendientes** (archivos, imágenes, capturas y
+  grabaciones). Miniatura de las imágenes; tocar = verla en grande (los GIF se
+  animan) u abrir el archivo con su app. En la lista sale "📎 N".
+- **Botón flotante 📷 en todas las pantallas** (esquina inferior izquierda):
+  - *Capturar pantalla*: foto de la app (el botón se esconde para no salir).
+  - *Grabar pantalla*: el botón se pone rojo con el contador (● 0:12); tócalo
+    para detener. Se guarda como **GIF animado** (~2.5 cuadros/s, máx. 90 s).
+  - Al terminar: aviso con **[Reportar]** → pendiente nuevo con la captura
+    adjunta y el **módulo donde la tomaste ya elegido**.
+  - Lo que no reportes queda en **Mis capturas** (Desarrollo → 🖼) para
+    adjuntarlo después ("De mis capturas" en el formulario) o borrarlo.
+- **Exportar a Excel** (Desarrollo → ▦): hoja *Resumen* (prioridad, barra de
+  avance y conteos por prioridad con fórmulas; cada módulo es un vínculo a su
+  hoja) + **una hoja por módulo** con sus pendientes: prioridad con color,
+  estado, tipo, descripción, adjuntos y fechas (los hechos en gris).
+
+### Base de datos
+- 0010: tabla `dev_adjuntos`. Archivos en `data/desarrollo/<pendiente>/`,
+  bandeja en `data/capturas/` (ambos entran en el respaldo).
+
+### Dependencias
+- `Pillow` (arma el GIF de las grabaciones): `pip install -r requirements.txt`.
+
+## 0.12.0 — 2026-09-29
+
+### Nuevo
+- **Calendario → vista Día: marcar y desmarcar tareas** con el círculo, igual
+  que en el chismoso (○ marca hecha, ✓ deshace; si es de un proyecto, ofrece
+  registrar el avance en su bitácora).
+  - Solo se marca la fecha que **toca ahorita**: en una recurrente, la de
+    mañana se habilita cuando marcas la de hoy (el círculo tenue avisa
+    "Primero marca la del …").
+  - Solo se deshace la **última vez** que la marcaste (deshacer una vieja
+    descuadraría las fechas de la recurrente).
+
+## 0.11.0 — 2026-09-29
+
+### Nuevo
+- **Calendario: deslizar ← →** para ir al siguiente / anterior día, semana, mes
+  o año (con el dedo, o arrastrando con el mouse en la compu). Basta un
+  arrastre de ~60 px o un "flick" rápido.
+- Animación tipo carrusel: el periodo actual sale hacia el lado del dedo y el
+  nuevo entra por el otro. Las flechas ◀ ▶ usan la misma animación.
+- Ícono de "deslizar" junto al resumen, como pista.
+
+## 0.10.0 — 2026-09-29
+
+### Nuevo
+- **Agenda → pestaña Calendario**: cuántas tareas hay en un rango.
+  - Vistas **Día**, **Semana**, **Mes** y **Año** (los 12 meses completos en
+    miniatura). ◀ ▶ para moverte y **Hoy** para regresar.
+  - Las recurrentes aparecen en **cada** fecha que les toca (la renta mensual
+    sale en todos los meses, la diaria todos los días); lo ya hecho sale del
+    historial en verde.
+  - Resumen del rango: "38 tareas · 5 hechas · 2 vencidas".
+  - Filtros: **tipo de proyecto** (Personal, Familiar, Trabajo, Sin proyecto) y
+    **proyecto** (la lista se ajusta al tipo elegido).
+  - Mes y Año se colorean por cantidad de tareas (más tareas = color más fuerte);
+    tocar un día abre la vista Día, tocar un mes en Año abre ese Mes.
+- `services.occurrences(inicio, fin, tipo, proyecto)`: expande las tareas en un
+  rango de fechas (lo podrán usar otros reportes).
+
+## 0.9.0 — 2026-09-29
+
+### Nuevo
+- **Desarrollo**: el roadmap de la propia app.
+  - Cada **módulo** con nombre, descripción, **prioridad** (alta/media/baja) y
+    **% de avance** (barra). Arranca con Finanzas 95 %, Proyectos 50 %,
+    Agenda 50 % y Memorias 0 %.
+  - Cada módulo tiene sus **pendientes**: tarea, error o comentario, cada uno
+    con su propia prioridad. Tocar ○ lo marca hecho (guarda cuándo); en la
+    pestaña **Hechos** del módulo tocar ✓ lo regresa.
+  - Pestaña **Pendientes**: todo lo abierto de la app agrupado
+    🔴 Alta → 🟡 Media → ⚪ Baja, para ver qué sigue de un vistazo.
+  - Engrane del módulo: editar sus datos o eliminarlo (con sus pendientes).
+
+### Base de datos
+- 0009: tablas `dev_modulos` y `dev_pendientes` (+ los 4 módulos iniciales).
+
 ## 0.8.0 — 2026-09-29
 
 ### Nuevo

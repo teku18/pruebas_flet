@@ -23,6 +23,7 @@ from core.ui import (
     dropdown_options,
     edit_button,
     notify,
+    service,
     short_date,
     swipe_to_delete,
 )
@@ -73,9 +74,7 @@ class LogView:
         self.adjuntos: list[dict] = []
         self.adjuntos_borrar: list[int] = []  # ids a borrar al guardar
 
-        # Servicios de Flet (no se ven en pantalla)
-        self.picker = ft.FilePicker()
-        self.launcher = ft.UrlLauncher()
+        # Servicios de Flet (FilePicker, UrlLauncher): se piden con service() al usarlos
 
         self._build_form()
         self._build_list()
@@ -348,13 +347,16 @@ class LogView:
 
     async def pick_files(self, e=None):  # propio
         """Botón Adjuntar: abre el selector de archivos del sistema."""
-        archivos = await self.picker.pick_files(
-            dialog_title="Elige la evidencia", allow_multiple=True
+        archivos = await service(self.page, ft.FilePicker).pick_files(
+            dialog_title="Elige la evidencia", allow_multiple=True,
+            with_data=True,  # el contenido: desde el celular la ruta no sirve aquí
         )
         for f in archivos or []:
             self.adjuntos.append(
                 {"id": None, "nombre": f.name, "tamano": f.size, "ruta": None,
-                 "origen": f.path, "datos": f.bytes}
+                 # la ruta solo si existe aquí (desde el celular llegan los bytes)
+                 "origen": f.path if f.path and Path(f.path).exists() else None,
+                 "datos": f.bytes}
             )
         self._render_attachments()
         self.page.update()
@@ -372,7 +374,7 @@ class LogView:
         if not archivo.exists():
             notify(self.page, "No se encontró el archivo")
             return
-        await self.launcher.launch_url(archivo.as_uri())
+        await service(self.page, ft.UrlLauncher).launch_url(archivo.as_uri())
 
     # --- Llenar / limpiar -------------------------------------------------
     def _fill(self, en: Entrada):  # propio

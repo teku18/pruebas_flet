@@ -15,3 +15,6 @@ openpyxl==3.1.5
 
 # Gráficas nativas de Flet (pastel, barras, líneas) para los reportes
 flet-charts==1.0.0
+
+# Grabaciones de pantalla de Desarrollo (arma el GIF animado)
+Pillow==12.2.0

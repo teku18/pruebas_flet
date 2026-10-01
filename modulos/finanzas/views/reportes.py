@@ -21,7 +21,7 @@ import math
 import flet as ft
 import flet_charts as fch
 
-from core.ui import MESES, notify
+from core.ui import MESES, notify, service
 from modulos.finanzas import routes
 from modulos.finanzas.colores import (
     AZUL,
@@ -65,7 +65,6 @@ class ReportsView:
         self.inversion_id: int | None = None
         # True = abierto desde un periodo: se queda en ese periodo (sin selector)
         self.fijo = False
-        self.picker = ft.FilePicker()  # para "Guardar como…" del Excel
 
         self.dd_periodo = ft.Dropdown(label="Periodo", expand=True, on_select=self._on_period)
         self.fila_periodo = ft.Row([self.dd_periodo])
@@ -166,7 +165,7 @@ class ReportsView:
         except Exception as ex:  # noqa: BLE001
             notify(self.page, f"No se pudo generar el Excel: {ex}")
             return
-        ruta = await self.picker.save_file(
+        ruta = await service(self.page, ft.FilePicker).save_file(
             dialog_title="Guardar reporte en Excel",
             file_name=export_file_name(periodo, concepto),
             file_type=ft.FilePickerFileType.CUSTOM,

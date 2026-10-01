@@ -45,6 +45,7 @@ def import_models():  # propio
     import modulos.finanzas.models  # noqa: F401
     import modulos.proyectos.models  # noqa: F401
     import modulos.agenda.models  # noqa: F401
+    import modulos.desarrollo.models  # noqa: F401
 
 
 def alembic_config() -> Config:  # propio

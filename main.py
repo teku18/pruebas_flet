@@ -7,6 +7,7 @@ Estructura del proyecto:
   modulos/memorias/     -> (próximamente) pensamientos por voz
   modulos/proyectos/    -> proyectos y su bitácora de avances
   modulos/agenda/       -> tareas (con o sin proyecto) y el chismoso del día
+  modulos/desarrollo/   -> roadmap de la app: módulos, prioridad y pendientes
   modulos/configuracion -> modo claro/oscuro y color de la app
 
 Convención: los métodos y funciones marcados con  # propio  son nuestros;
@@ -54,6 +55,7 @@ def main(page: ft.Page):  # propio
     #   /finanzas... -> Inicio > (pantallas de Finanzas)
     #   /memorias    -> Inicio > Memorias
     #   /agenda      -> Inicio > Agenda
+    #   /desarrollo  -> Inicio > Desarrollo
     #   /ajustes     -> Inicio > Configuración
     # ------------------------------------------------------------------
     def on_route_change(e=None):  # propio
