@@ -1,7 +1,10 @@
 """
-Pantallas de la Bitácora de un proyecto:
-  /proyectos/bitacora -> entradas del proyecto abierto (la más reciente arriba)
-  /proyectos/entrada  -> una entrada: nuevo, ver o editar, con sus adjuntos
+Pantallas de un proyecto abierto:
+  /proyectos/bitacora -> dos pestañas:
+       [Bitácora]  entradas (la más reciente arriba), filtro por tipo de entrada
+       [Tareas]    tareas del proyecto en Lista ☰ o Kanban ▥ (ver tareas.py)
+  /proyectos/entrada  -> una entrada: nuevo, ver o editar, con sus adjuntos.
+                         El "+" junto al Tipo crea un tipo nuevo sin salir.
 
 Adjuntos: se eligen con FilePicker, se copian a data/adjuntos/<proyecto>/<entrada>/
 y la BD guarda solo la ruta. Mientras editas, los cambios de adjuntos quedan
@@ -20,7 +23,6 @@ from core.ui import (
     add_button,
     confirm,
     delete_button,
-    dropdown_options,
     edit_button,
     notify,
     service,
@@ -30,19 +32,12 @@ from core.ui import (
 from modulos.proyectos import routes
 from modulos.proyectos.models import (
     ADJUNTOS_DIR,
-    TIPO_ENTRADA_SELECTION,
     Adjunto,
     Entrada,
     Proyecto,
+    TipoEntrada,
 )
-
-# Ícono y color de cada tipo de entrada
-ESTILO_ENTRADA = {
-    "avance": (ft.Icons.TRENDING_UP, ft.Colors.OUTLINE),
-    "hito": (ft.Icons.STAR, ft.Colors.AMBER),
-    "problema": (ft.Icons.REPORT_PROBLEM, ft.Colors.ORANGE),
-    "cierre": (ft.Icons.FLAG, ft.Colors.GREEN),
-}
+from modulos.proyectos.views.comun import catalog_dialog, icon_of, view_toggle
 
 EXT_IMAGEN = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp"}
 
@@ -60,12 +55,16 @@ def attachment_icon(nombre: str):  # propio
 class LogView:
     def __init__(self, page: ft.Page, on_show_project):
         """on_show_project: función del engrane (muestra los datos del proyecto)."""
+        from modulos.proyectos.views.tareas import ProjectTasks
+
         self.page = page
         self.on_show_project = on_show_project
         self.proyecto: Proyecto | None = None  # proyecto abierto
         self.registro: Entrada | None = None   # entrada mostrada en el formulario
         self.modo = "nuevo"
-        self.solo_hitos = False                # filtro de la lista (línea de tiempo)
+        self.pestana = "bitacora"              # "bitacora" | "tareas"
+        self.tipo_id: int | None = None        # filtro de la bitácora (None = todos)
+        self.tareas = ProjectTasks(page, on_changed=self.refresh)
 
         # Adjuntos del formulario: lista de dicts
         #   {"id": int|None, "nombre", "tamano", "ruta": str|None,
@@ -88,31 +87,25 @@ class LogView:
             "Sin entradas. Registra el primer avance con el botón +.", italic=True
         )
         self.lbl_titulo_lista = ft.Text("Bitácora")
-        self.chip_hitos = ft.Chip(
-            label=ft.Text("Solo hitos"),
-            leading=ft.Icon(ft.Icons.STAR, color=ft.Colors.AMBER),
-            selected=False,
-            on_select=self.toggle_milestones,
-        )
+        self.fila_pestanas = ft.Row(spacing=6)
+        self.fila_filtros = ft.Row(scroll=ft.ScrollMode.AUTO, spacing=6)
+        # El cuerpo cambia: entradas (bitácora) o tareas (lista / Kanban)
+        self.cuerpo = ft.Container(expand=True, content=self.lista)
+        self.fab_entrada = add_button("Nueva entrada", self.new)
+        self.fab_tarea = add_button("Nueva tarea", lambda e: self.tareas.new())
 
+        self.barra = ft.AppBar(title=self.lbl_titulo_lista)
         self.vista_lista = ft.View(
             route=routes.BITACORA,
-            appbar=ft.AppBar(
-                title=self.lbl_titulo_lista,
-                actions=[
-                    ft.IconButton(
-                        ft.Icons.SETTINGS,
-                        tooltip="Datos del proyecto",
-                        on_click=lambda e: self.on_show_project(self.proyecto),
-                    )
-                ],
-            ),
-            floating_action_button=add_button("Nueva entrada", self.new),
+            appbar=self.barra,
+            floating_action_button=self.fab_entrada,
             controls=[
                 ft.SafeArea(
                     expand=True,
                     content=ft.Column(
-                        expand=True, controls=[ft.Row([self.chip_hitos]), self.lbl_vacio, self.lista]
+                        expand=True,
+                        controls=[self.fila_pestanas, self.fila_filtros, self.lbl_vacio,
+                                  self.cuerpo],
                     ),
                 )
             ],
@@ -121,29 +114,82 @@ class LogView:
     def open_project(self, proyecto: Proyecto):  # propio
         """Lo llama la lista de proyectos al tocar uno."""
         if self.proyecto is None or self.proyecto.id != proyecto.id:
-            self.solo_hitos = False  # otro proyecto: la lista empieza completa
+            self.tipo_id = None  # otro proyecto: la bitácora empieza completa
         self.proyecto = proyecto
         self.page.navigate(routes.BITACORA)
 
-    def toggle_milestones(self, e=None):  # propio
-        self.solo_hitos = not self.solo_hitos
+    def set_tab(self, pestana: str):  # propio
+        self.pestana = pestana
+        self.refresh()
+
+    def set_type(self, tipo_id: int | None):  # propio
+        self.tipo_id = tipo_id
+        self.refresh()
+
+    def set_task_view(self, modo: str):  # propio
+        self.tareas.vista_modo = modo
+        self.refresh()
+
+    def refresh(self):  # propio
         self.load()
         self.page.update()
+
+    def _build_tabs(self, pendientes: int):  # propio
+        texto_tareas = f"Tareas ({pendientes})" if pendientes else "Tareas"
+        self.fila_pestanas.controls = [
+            ft.Chip(label=ft.Text(texto), leading=ft.Icon(icono, size=16),
+                    show_checkmark=False,  # el ícono ya dice qué es; la palomita lo tapaba
+                    selected=self.pestana == clave,
+                    on_select=lambda e, c=clave: self.set_tab(c))
+            for clave, texto, icono in (("bitacora", "Bitácora", ft.Icons.MENU_BOOK),
+                                        ("tareas", texto_tareas, ft.Icons.CHECKLIST))
+        ]
+        acciones = []
+        if self.pestana == "tareas":
+            acciones.append(view_toggle(self.tareas.vista_modo, self.set_task_view))
+        acciones.append(ft.IconButton(
+            ft.Icons.SETTINGS, tooltip="Datos del proyecto",
+            on_click=lambda e: self.on_show_project(self.proyecto)))
+        self.barra.actions = acciones
+        self.vista_lista.floating_action_button = (
+            self.fab_tarea if self.pestana == "tareas" else self.fab_entrada)
+
+    def _build_filters(self):  # propio
+        """Chips por tipo de entrada: [Todos] [★ Hito] [Avance] … (solo en la bitácora)."""
+        self.fila_filtros.visible = self.pestana == "bitacora"
+        tipos = TipoEntrada.search_all()
+        if self.tipo_id not in {t.id for t in tipos}:
+            self.tipo_id = None
+        self.fila_filtros.controls = [
+            ft.Chip(label=ft.Text("Todos"), selected=self.tipo_id is None,
+                    on_select=lambda e: self.set_type(None)),
+            *[ft.Chip(label=ft.Text(t.nombre),
+                      leading=ft.Icon(icon_of(t.icono), size=16, color=t.color),
+                      show_checkmark=False,
+                      selected=self.tipo_id == t.id,
+                      on_select=lambda e, i=t.id: self.set_type(i))
+              for t in tipos],
+        ]
 
     def load(self):  # propio
         self.proyecto = Proyecto.get(self.proyecto.id)  # por si se editó o eliminó
         if self.proyecto is None:
             return
         self.lbl_titulo_lista.value = self.proyecto.nombre
-        self.chip_hitos.selected = self.solo_hitos
-        entradas = Entrada.search_by_project(
-            self.proyecto.id, tipo="hito" if self.solo_hitos else None
-        )
+        self._build_tabs(self.tareas.pending_count(self.proyecto))
+        self._build_filters()
+        if self.pestana == "tareas":
+            self.lbl_vacio.visible = False
+            self.cuerpo.content = self.tareas.body(self.proyecto)
+            return
+
+        entradas = Entrada.search_by_project(self.proyecto.id, tipo_id=self.tipo_id)
         self.lista.controls = [self._row(en) for en in entradas]
+        self.cuerpo.content = self.lista
         self.lbl_vacio.visible = not entradas
         self.lbl_vacio.value = (
-            "Sin hitos todavía. Marca como Hito los avances importantes."
-            if self.solo_hitos
+            "No hay entradas de este tipo."
+            if self.tipo_id
             else "Sin entradas. Registra el primer avance con el botón +."
         )
 
@@ -166,8 +212,8 @@ class LogView:
                 )
             ]
 
-        icono, color = ESTILO_ENTRADA.get(en.tipo, ESTILO_ENTRADA["avance"])
-        es_hito = en.tipo == "hito"
+        icono, color = icon_of(en.tipo.icono), en.tipo.color
+        es_hito = en.es_hito
         tarjeta = ft.Container(
             padding=12,
             border_radius=12,
@@ -214,12 +260,12 @@ class LogView:
     # ==================================================================
     def _build_form(self):  # propio
         self.campo_fecha = DateField(self.page, "Fecha")
-        self.dd_tipo = ft.Dropdown(
-            label="Tipo",
-            options=dropdown_options(TIPO_ENTRADA_SELECTION),
-            value="avance",
-            expand=True,
+        self.fila_tipo = ft.Row()
+        self.btn_nuevo_tipo = ft.IconButton(
+            ft.Icons.ADD_CIRCLE_OUTLINE, tooltip="Crear un tipo nuevo",
+            on_click=self.new_type,
         )
+        self._new_type_dropdown(None)
         self.txt_notas = ft.TextField(
             label="Notas del avance", multiline=True, min_lines=4, max_lines=12, expand=True
         )
@@ -251,7 +297,7 @@ class LogView:
                         spacing=10,
                         controls=[
                             self.campo_fecha.fila,
-                            ft.Row([self.dd_tipo]),
+                            self.fila_tipo,
                             # Dentro de un Row con expand=True ocupa todo el ancho
                             ft.Row([self.txt_notas]),
                             ft.Row(
@@ -271,11 +317,37 @@ class LogView:
         )
         self._apply_mode()
 
+    def _new_type_dropdown(self, valor: int | None):  # propio
+        """Dropdown nuevo con los tipos del catálogo (+ botón para crear uno)."""
+        tipos = TipoEntrada.search_all()
+        if valor is None:
+            defecto = TipoEntrada.default()
+            valor = defecto.id if defecto else None
+        self.dd_tipo = ft.Dropdown(
+            label="Tipo",
+            options=[ft.DropdownOption(key=str(t.id), text=t.nombre,
+                                       leading_icon=icon_of(t.icono)) for t in tipos],
+            value=str(valor) if valor else None,
+            expand=True,
+            disabled=getattr(self, "modo", "nuevo") == "ver",
+        )
+        self.fila_tipo.controls = [self.dd_tipo, self.btn_nuevo_tipo]
+
+    def new_type(self, e=None):  # propio
+        """"+" junto al Tipo: crea el tipo en un diálogo y lo deja elegido."""
+        def saved(tipo):  # propio
+            self._new_type_dropdown(tipo.id)
+            notify(self.page, f"Tipo «{tipo.nombre}» creado")
+            self.page.update()
+
+        catalog_dialog(self.page, TipoEntrada, saved)
+
     def _apply_mode(self):  # propio
         lectura = self.modo == "ver"
         self.txt_notas.read_only = lectura
         self.campo_fecha.set_enabled(not lectura)
         self.dd_tipo.disabled = lectura
+        self.btn_nuevo_tipo.visible = not lectura
         self.btn_adjuntar.visible = not lectura
 
         self.btn_barra_editar.visible = lectura
@@ -379,7 +451,7 @@ class LogView:
     # --- Llenar / limpiar -------------------------------------------------
     def _fill(self, en: Entrada):  # propio
         self.campo_fecha.set_value(en.fecha_hora.date())
-        self.dd_tipo.value = en.tipo
+        self._new_type_dropdown(en.tipo_id)
         self.txt_notas.value = en.notas
         self.adjuntos = [
             {"id": a.id, "nombre": a.nombre, "tamano": a.tamano, "ruta": a.ruta,
@@ -394,7 +466,7 @@ class LogView:
     def clear_form(self):  # propio
         self.clear_errors()
         self.campo_fecha.set_value(date.today())
-        self.dd_tipo.value = "avance"
+        self._new_type_dropdown(None)  # por si cambiaron los tipos en Ajustes
         self.txt_notas.value = ""
         self.adjuntos = []
         self.adjuntos_borrar = []
@@ -448,7 +520,7 @@ class LogView:
         valores = dict(
             proyecto_id=self.proyecto.id,
             fecha_hora=self._entry_datetime(),
-            tipo=self.dd_tipo.value or "avance",
+            tipo_id=int(self.dd_tipo.value) if self.dd_tipo.value else TipoEntrada.default().id,
             notas=notas,
         )
         try:

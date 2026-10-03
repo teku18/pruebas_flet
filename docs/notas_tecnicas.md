@@ -40,6 +40,10 @@ código** (para que lo abras y lo veas funcionando).
 | 27 | [Arranque frágil: preferencias que no responden](#27-arranque-frágil-preferencias-que-no-responden) | `core/ui.py` → `pref_get()` |
 | 28 | [rclone: subir, consultar y bajar respaldos](#28-rclone-subir-consultar-y-bajar-respaldos) | `core/drive.py`, `docs/respaldo.md` |
 | 29 | [Del código al APK: datos, firma y versiones](#29-del-código-al-apk-datos-firma-y-versiones) | `core/database.py`, `pyproject.toml`, `scripts/build_apk.sh` |
+| 30 | [El candado de la BD](#30-el-candado-de-la-bd-por-qué-se-perdieron-desarrollo-proyectos-y-agenda) | `core/database.py` |
+| 31 | [De Selection a catálogo: etapas](#31-de-selection-a-catálogo-etapas-como-los-stage_id-de-odoo) | `modulos/proyectos/models/catalogos.py`, migración 0011 |
+| 32 | [Kanban con Flet: Draggable + DragTarget](#32-kanban-con-flet-draggable--dragtarget) | `modulos/proyectos/views/comun.py`, `tareas.py` |
+| 33 | [Probar en el navegador con Playwright](#33-cómo-se-probó-sin-celular-flet-en-el-navegador--playwright) | (pruebas, fuera del repo) |
 
 ---
 
@@ -587,6 +591,103 @@ BD y adjuntos personales; `[tool.flet.compile] app = false` + Alembic
 **Dónde.** `core/database.py` (`ES_MOVIL`, `DATA_ROOT`), `pyproject.toml`,
 `scripts/build_apk.sh`, `docs/apk.md`.
 
+## 30. El candado de la BD: por qué se perdieron Desarrollo, Proyectos y Agenda
+
+**Qué pasó.** Se cambió en el código `movimientos.db` → `ControlKraken.db`.
+Al abrir, la app buscó `ControlKraken.db`, no la encontró y `init_db()` hizo lo
+que hace con una compu nueva: crear una BD VACÍA y migrarla. Finanzas se
+recuperó porque se volvió a importar del Excel; lo demás no tenía otra copia.
+
+```
+ antes:   código → ControlKraken.db ?  ✗ no existe → BD nueva vacía
+ ahora:   código → ControlKraken.db ?  ✗ → ¿movimientos.db? ✓ → se RENOMBRA
+```
+
+**Lección.** Cambiar el nombre/ubicación de un archivo de datos es una
+*migración*, no un cambio de texto: hay que mover lo viejo, no solo apuntar a
+lo nuevo. (En Odoo pasa igual con un campo renombrado sin script de migración:
+la columna vieja se queda huérfana y la nueva nace vacía.)
+
+**Dónde.** `core/database.py` → `_adopt_previous_db()` (se llama al inicio de
+`init_db()`), `DB_NOMBRES_ANTERIORES`.
+
+## 31. De Selection a catálogo: etapas como los stage_id de Odoo
+
+**Qué es.** Antes `Proyecto.estado` era texto fijo ("activo", "pausa"…). Ahora
+es un Many2one a un **catálogo** (`EtapaProyecto`), igual que `stage_id` en
+Odoo: registros que tú creas, ordenas y coloreas. Lo mismo para el tipo de
+entrada (`TipoEntrada`) y las columnas de tareas (`EtapaTarea`).
+
+**El truco: la "clase".** Si las etapas son libres, ¿cómo sabe la app cuál es
+"terminado"? Cada etapa guarda QUÉ SIGNIFICA (`clase`): en_curso, pausa,
+terminada, cancelada. Tú le pones el nombre que quieras ("En revisión") y el
+código pregunta por la clase, no por el nombre (como `fold`/`is_closed` en Odoo).
+
+```
+ proyectos.etapa_id ──► proyecto_etapas (nombre, secuencia, clase, color)
+ proyecto_entradas.tipo_id ──► proyecto_tipos_entrada (nombre, es_hito, icono)
+ tareas.etapa_id ──► tarea_etapas (nombre, cerrada)
+ proyecto_etapas_tarea  = Many2many: qué columnas de tarea usa cada proyecto
+```
+
+**Piezas de SQLAlchemy que aparecieron:**
+- `relationship(lazy="joined")`: la etapa llega en la MISMA consulta que el
+  proyecto (un JOIN). Así `pro.etapa.nombre` funciona aunque la sesión ya se
+  cerró (sin esto: `DetachedInstanceError`).
+- `relationship(secondary=tabla)`: Many2many con tabla intermedia
+  (como `many2many` de Odoo con su `relation`).
+- `Proyecto.etapa.has(EtapaProyecto.clase == "terminada")`: filtrar por un
+  campo del registro relacionado (como un dominio `[("etapa_id.clase", "=", …)]`).
+- `CatalogoMixin.delete` no deja borrar si está en uso: `ondelete="restrict"`.
+
+**La migración (0011)** sigue la receta de la 0004: crear catálogo → llenarlo →
+columna nueva opcional → copiar texto→id → hacerla obligatoria → borrar la vieja.
+
+**Dónde.** `modulos/proyectos/models/catalogos.py`,
+`alembic/versions/0011_proyectos_etapas.py`, pantalla
+`modulos/proyectos/views/ajustes.py`.
+
+## 32. Kanban con Flet: Draggable + DragTarget
+
+**Qué es.** Flet trae arrastrar y soltar:
+
+```
+ Row(scroll)                      ← el tablero se desliza de lado
+  ├ DragTarget(group="tareas")    ← columna "Por hacer"
+  │   └ tarjeta ─ Draggable(group="tareas", data=7)   ← la manija ⋮⋮
+  └ DragTarget(group="tareas")    ← columna "Hecho"
+        on_accept(e): e.src.data == 7  → move_task(7, etapa)
+```
+
+- Solo se acepta si `group` coincide (proyectos y tareas no se mezclan).
+- `on_will_accept` / `on_leave`: pintamos la columna mientras pasas encima.
+- **Por qué solo la manija es arrastrable**: si toda la tarjeta fuera
+  Draggable, al deslizar el tablero con el dedo empezarías a arrastrarla. Con
+  la manija, el resto de la tarjeta sigue deslizando y abriendo.
+- En el celular arrastrar puede ser incómodo: el menú ⋮ "Mover a…" hace lo mismo.
+
+**Regla de negocio** (`services.move_task`): llevar una tarea a una etapa
+`cerrada` = marcarla hecha con su `Cumplimiento` (igual que en la Agenda);
+sacarla = deshacer el último. Una sola verdad para Agenda y Proyecto.
+
+**Dónde.** `modulos/proyectos/views/comun.py` (`kanban_board`, `drag_handle`,
+`move_menu`), `views/tareas.py`, `services.py` (`move_task`, `tasks_by_stage`).
+
+## 33. Cómo se probó sin celular: Flet en el navegador + Playwright
+
+Para ver las pantallas se corrió la app como página web y un navegador sin
+ventana (Playwright) tomó capturas y simuló toques y arrastres:
+
+```python
+ft.run(main, view=ft.AppView.WEB_BROWSER, port=8551, no_cdn=True)
+```
+
+- `no_cdn=True`: usa los archivos de Flutter que trae `flet-web` en vez de
+  bajarlos de internet.
+- El navegador necesita un idioma (`locale="es-MX"`); sin él Flutter truena con
+  "Incorrect locale information provided".
+- Siempre sobre una **copia** de la BD, nunca la tuya.
+
 ---
 
 ## Registro de cambios de estas notas
@@ -597,3 +698,4 @@ BD y adjuntos personales; `[tool.flet.compile] app = false` + Alembic
 | 2026-09-29 | 0.14.0 | 24–26 (área segura del celular, menú con velo, pincel) |
 | 2026-09-30 | 0.14.1 | 27–28 (arranque frágil / preferencias, rclone) |
 | 2026-10-01 | 1.0.0 | 29 (APK: datos, firma y versiones) |
+| 2026-10-02 | 1.1.0 | 30–33 (candado de la BD, catálogos/etapas, Kanban, pruebas en navegador) |

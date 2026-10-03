@@ -78,11 +78,28 @@ def alembic_config() -> Config:  # propio
     return cfg
 
 
+def _adopt_previous_db():  # propio
+    """
+    Candado: si falta ControlKraken.db pero está la BD con su nombre anterior
+    (movimientos.db), se RENOMBRA en vez de crear una vacía.
+    Así se perdieron Desarrollo, Proyectos y Agenda el 1/oct/2026: al cambiar
+    el nombre en el código, la app no encontró el archivo y nació una BD nueva.
+    """
+    if DB_PATH.exists():
+        return
+    for nombre in DB_NOMBRES_ANTERIORES:
+        anterior = DB_PATH.with_name(nombre)
+        if anterior.exists():
+            anterior.rename(DB_PATH)
+            return
+
+
 def init_db():  # propio
     """Deja la BD al día: aplica las migraciones pendientes."""
     global BD_NUEVA
     from core.backup import backup_before_migrate  # aquí para evitar import circular
 
+    _adopt_previous_db()
     BD_NUEVA = not DB_PATH.exists()
     import_models()
     cfg = alembic_config()

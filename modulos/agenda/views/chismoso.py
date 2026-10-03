@@ -305,23 +305,35 @@ def complete_task(page: ft.Page, t: Tarea, on_done) -> None:  # propio
     if t.proyecto_id is None:
         notify(page, f"✓ Hecho · vuelve el {short_date(proxima)}" if proxima else "✓ Hecho")
         return
+    ask_log_entry(page, t, proxima)
+
+
+def ask_log_entry(page: ft.Page, t: Tarea, proxima=None, on_registered=None) -> None:  # propio
+    """
+    Tarea de proyecto recién hecha: ¿dejar el avance en su bitácora?
+    (También la usa el Kanban de tareas del proyecto.)
+    """
+    from modulos.proyectos.models import Proyecto
 
     def close(e=None):  # propio
         page.pop_dialog()
 
     def register(e=None):  # propio
-        from modulos.proyectos.models import Entrada
+        from modulos.proyectos.models import Entrada, TipoEntrada
 
         page.pop_dialog()
         try:
             Entrada.create(proyecto_id=t.proyecto_id, fecha_hora=datetime.now().replace(microsecond=0),
-                           tipo="avance", notas=f"✓ {t.titulo}")
+                           tipo_id=TipoEntrada.default().id, notas=f"✓ {t.titulo}")
         except Exception as ex:  # noqa: BLE001
             notify(page, f"No se pudo registrar: {ex}")
             return
         notify(page, "Avance registrado en la bitácora")
+        if on_registered:
+            on_registered()
 
-    nombre = t.proyecto.nombre if t.proyecto else "su proyecto"
+    proyecto = Proyecto.get(t.proyecto_id)
+    nombre = proyecto.nombre if proyecto else "su proyecto"
     page.show_dialog(
         ft.AlertDialog(
             modal=True,

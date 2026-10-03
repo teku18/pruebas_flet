@@ -1,6 +1,8 @@
 """Rutas del módulo Proyectos."""
-BASE = "/proyectos"                                  # lista de proyectos
+BASE = "/proyectos"                                  # proyectos (lista o Kanban)
 PROYECTO = "/proyectos/proyecto"                     # nuevo proyecto
-BITACORA = "/proyectos/bitacora"                     # entradas del proyecto abierto
+AJUSTES = "/proyectos/ajustes"                       # etapas y tipos de entrada
+BITACORA = "/proyectos/bitacora"                     # proyecto abierto: bitácora y tareas
 BITACORA_PROYECTO = "/proyectos/bitacora/proyecto"   # datos del proyecto (engrane)
+TAREA = "/proyectos/bitacora/tarea"                  # una tarea del proyecto
 ENTRADA = "/proyectos/entrada"                       # una entrada de bitácora

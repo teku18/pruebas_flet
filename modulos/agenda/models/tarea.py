@@ -8,6 +8,11 @@ La "fecha" de una tarea es su PRÓXIMA fecha:
   - Recurrente: al marcarla hecha se guarda un Cumplimiento y "fecha"
                 salta al siguiente periodo (la renta del 1 oct pasa al 1 nov).
 Así el chismoso solo pregunta "¿qué tareas tienen fecha <= mañana?".
+
+Tareas de un proyecto (se crean desde el proyecto, pestaña Tareas):
+  - etapa_id: su columna en el Kanban (catálogo EtapaTarea de Proyectos)
+  - fecha puede ir VACÍA: una tarea sin fecha vive solo en el proyecto y NO
+    sale en la Agenda (no hay día en el cual mostrarla). Ponle fecha y aparece.
 """
 from datetime import date, datetime, time
 
@@ -45,7 +50,7 @@ class Tarea(CrudMixin, Base):
     # Opcional: NULL = tarea suelta ("sacar a los perros")
     proyecto_id: Mapped[int | None] = mapped_column(ForeignKey("proyectos.id"), nullable=True)
 
-    fecha: Mapped[date] = mapped_column(Date, nullable=False)          # próxima fecha
+    fecha: Mapped[date | None] = mapped_column(Date, nullable=True)    # próxima fecha (None = sin fecha)
     hora_inicio: Mapped[time | None] = mapped_column(Time, nullable=True)  # None = todo el día
     hora_fin: Mapped[time | None] = mapped_column(Time, nullable=True)
     frecuencia: Mapped[str] = mapped_column(String(20), nullable=False, default="unica")
@@ -53,7 +58,10 @@ class Tarea(CrudMixin, Base):
     creado_en: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, default=datetime.now
     )
+    # Columna del Kanban del proyecto (None = la primera que le toque)
+    etapa_id: Mapped[int | None] = mapped_column(ForeignKey("tarea_etapas.id"), nullable=True)
 
+    etapa: Mapped["EtapaTarea | None"] = relationship(lazy="joined")  # noqa: F821
     # Many2one hacia Proyecto (sin back_populates: Proyectos no necesita conocer a la Agenda)
     proyecto: Mapped["Proyecto | None"] = relationship()  # noqa: F821
     cumplimientos: Mapped[list["Cumplimiento"]] = relationship(
@@ -69,6 +77,10 @@ class Tarea(CrudMixin, Base):
     def _validate(self) -> None:  # propio
         if not (self.titulo or "").strip():
             raise ValueError("La tarea necesita un título")
+        if self.fecha is None and not self.proyecto_id:
+            raise ValueError("Una tarea sin proyecto necesita fecha")
+        if self.fecha is None and self.frecuencia != "unica":
+            raise ValueError("Una tarea que se repite necesita fecha")
         if self.hora_fin and not self.hora_inicio:
             raise ValueError("Pon la hora de inicio antes que la de fin")
         if self.hora_inicio and self.hora_fin and self.hora_fin < self.hora_inicio:
@@ -102,7 +114,8 @@ class Cumplimiento(CrudMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     tarea_id: Mapped[int] = mapped_column(ForeignKey("tareas.id"), nullable=False)
-    fecha_programada: Mapped[date] = mapped_column(Date, nullable=False)  # la que tocaba
+    # La que tocaba (None = tarea de proyecto sin fecha)
+    fecha_programada: Mapped[date | None] = mapped_column(Date, nullable=True)
     hecho_en: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # cuándo lo marcaste
 
     tarea: Mapped["Tarea"] = relationship(back_populates="cumplimientos")

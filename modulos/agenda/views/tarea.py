@@ -109,7 +109,7 @@ class TaskFormView:
 
         proyectos = [
             p for p in Proyecto.search_all()
-            if p.estado in ("activo", "pausa") or p.id == incluir_id
+            if not p.cerrado or p.id == incluir_id
         ]
         self.dd_proyecto.options = [ft.DropdownOption(key=SIN_PROYECTO, text="Sin proyecto")] + [
             ft.DropdownOption(key=str(p.id), text=p.nombre) for p in proyectos
@@ -170,7 +170,7 @@ class TaskFormView:
                         ft.Icon(ft.Icons.CHECK_CIRCLE, size=16, color=ft.Colors.GREEN),
                         ft.Text(
                             f"{short_date(c.hecho_en.date())}"
-                            + ("" if c.hecho_en.date() == c.fecha_programada
+                            + ("" if c.fecha_programada in (None, c.hecho_en.date())
                                else f"  (tocaba {short_date(c.fecha_programada)})"),
                             size=13,
                         ),

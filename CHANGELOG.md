@@ -1,5 +1,38 @@
 # Cambios de ControlKraken
 
+## 1.1.0 — 2026-10-02
+
+### Nuevo
+- **Proyectos en Kanban**: botón ☰/▥ para ver los proyectos en lista o en
+  columnas por etapa. Las tarjetas se arrastran por la manija ⋮⋮ o con el menú
+  ⋮ "Mover a…". Pasar a una etapa cerrada pone la fecha fin sola.
+- **Etapas configurables** (Proyectos → engrane → Ajustes): etapas de proyecto
+  (con su significado: en curso, en pausa, terminada, cancelada), etapas de
+  tarea (con "cuenta como hecha") y tipos de entrada; con color, orden ▲▼ y
+  borrado solo si nadie las usa. Cada proyecto elige qué etapas de tarea usa.
+- **Tareas dentro del proyecto**: pestaña "Tareas" en lista agrupada o Kanban.
+  Pueden ir sin fecha (solo viven en el proyecto) o con fecha (también salen en
+  la Agenda). Llevarla a "Hecho" la marca hecha y ofrece registrar el avance.
+- **Tipos de entrada como catálogo**: filtro por tipo en la bitácora (reemplaza
+  "Solo hitos") y "+" en el formulario para crear un tipo sin salir.
+- **Finanzas · ¿Aportado o rendimiento?**: dona en Reportes con cuánto del total
+  pusiste tú (saldo inicial + depósitos − retiros ± traspasos) y cuánto generó
+  el dinero, con montos y %. Solo aparece si el periodo tiene rendimientos.
+- **Respaldo en el celular en un solo botón**: «Respaldar y mandar a Drive»
+  crea el zip y abre el selector de Android. Muestra "Última copia en Drive" y
+  avisa si llevas 7 días o más sin mandarlo.
+
+### Cambios
+- Lista de proyectos más clara: etapa con color, avance de tareas (✓ 3/5) y los
+  cerrados ocultos (chip "Cerrados").
+- Migración 0011: `proyectos.estado` → `etapa_id`, `proyecto_entradas.tipo` →
+  `tipo_id`, `tareas.etapa_id`, fecha de tarea opcional.
+
+### Arreglos
+- **Candado de la BD**: si falta `ControlKraken.db` pero existe `movimientos.db`,
+  se renombra en vez de crear una BD vacía (así se perdieron Desarrollo,
+  Proyectos y Agenda en la compu el 1/oct al renombrar la BD).
+
 ## 1.0.1 — 2026-10-01
 
 ### Arreglos (celular)

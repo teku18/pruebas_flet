@@ -26,6 +26,7 @@ from modulos.finanzas.models import (
     SIGNO_TIPO,
     TIPOS_GASTO,
     TIPOS_INGRESO,
+    TIPOS_TRASPASO,
     Movimiento,
     Periodo,
     Plataforma,
@@ -165,6 +166,52 @@ def distribution_by_platform(periodo: Periodo,  # propio
     return sorted(
         (PlatformShare(pid, n, v, v * 100 / total) for pid, n, v in filas),
         key=lambda p: p.monto,
+    )
+
+
+@dataclass
+class ContributionSplit:
+    """
+    ¿De dónde salió el total al cierre?  Total = lo que TÚ pusiste + lo que GANÓ.
+      aportado    = saldo inicial + depósitos − retiros ± traspasos de/hacia fuera
+      rendimiento = rendimientos del periodo
+    """
+    saldo_inicial: float
+    depositos: float
+    retiros: float
+    traspasos: float     # neto de traspasos con lo que queda FUERA de la vista
+    rendimientos: float
+
+    @property
+    def aportado(self) -> float:  # propio
+        return round(self.saldo_inicial + self.depositos - self.retiros + self.traspasos, 2)
+
+    @property
+    def total(self) -> float:  # propio
+        return round(self.aportado + self.rendimientos, 2)
+
+    def porcentaje(self, valor: float) -> float:  # propio
+        """% del total (0-100); 0 si no hay total."""
+        return valor * 100 / self.total if self.total > 0 else 0.0
+
+
+def contribution_split(periodo: Periodo,  # propio
+                       inversion_id: int | None = None) -> ContributionSplit:
+    """Separa el total al cierre en lo que aportaste y lo que rindió."""
+    t = defaultdict(float)
+    for m, clase in _view(periodo.id, inversion_id):
+        if clase == "interno":
+            continue  # se cancela con su pareja
+        if m.tipo in TIPOS_TRASPASO:
+            t["traspasos"] += m.monto_con_signo
+        else:
+            t[m.tipo] += abs(m.monto) if m.tipo == "retiro" else m.monto
+    return ContributionSplit(
+        saldo_inicial=round(t["saldo_inicial"], 2),
+        depositos=round(t["deposito"], 2),
+        retiros=round(t["retiro"], 2),
+        traspasos=round(t["traspasos"], 2),
+        rendimientos=round(t["rendimiento"], 2),
     )
 
 

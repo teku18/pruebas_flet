@@ -7,6 +7,7 @@ se calcula cada vez que abres la pantalla.
     fecha == hoy     -> "hoy"      🟡
     fecha == mañana  -> "manana"   ⚪
   "hecha" 🟢 = tiene un Cumplimiento con hecho_en de hoy
+  Las tareas SIN fecha (de un proyecto) no salen aquí: viven en el proyecto.
 
   Marcar como hecha:
     única      -> completada = True
@@ -111,7 +112,7 @@ def all_pending() -> list[Tarea]:  # propio
     with SessionLocal() as session:
         return list(session.scalars(
             select(Tarea)
-            .where(Tarea.completada.is_(False))
+            .where(Tarea.completada.is_(False), Tarea.fecha.is_not(None))
             .options(selectinload(Tarea.proyecto))
             .order_by(Tarea.fecha, Tarea.hora_inicio.is_(None), Tarea.hora_inicio, Tarea.id)
         ))
@@ -141,9 +142,24 @@ def complete(tarea_id: int, ahora: datetime | None = None) -> Cumplimiento:  # p
             tarea.fecha = next_date(tarea.fecha, tarea.frecuencia)
         else:
             tarea.completada = True
+            # De un proyecto: pasa a la columna "hecha" de su Kanban
+            tarea.etapa_id = _stage_id(tarea, cerrada=True) or tarea.etapa_id
         session.commit()
         session.refresh(cumplimiento)
         return cumplimiento
+
+
+def _stage_id(tarea: Tarea, cerrada: bool) -> int | None:  # propio
+    """Primera etapa (cerrada o abierta) de las que usa el proyecto de la tarea."""
+    if tarea.proyecto_id is None:
+        return None
+    from modulos.proyectos.models import Proyecto
+    from modulos.proyectos.services import task_stages
+
+    pro = Proyecto.get(tarea.proyecto_id)
+    if pro is None:
+        return None
+    return next((e.id for e in task_stages(pro) if e.cerrada == cerrada), None)
 
 
 def undo(cumplimiento_id: int) -> None:  # propio
@@ -153,7 +169,9 @@ def undo(cumplimiento_id: int) -> None:  # propio
         if cumplimiento is None:
             return
         tarea = cumplimiento.tarea
-        tarea.fecha = cumplimiento.fecha_programada
+        tarea.fecha = cumplimiento.fecha_programada  # None si era una tarea sin fecha
+        if tarea.completada and tarea.etapa and tarea.etapa.cerrada:
+            tarea.etapa_id = _stage_id(tarea, cerrada=False)  # regresa a "por hacer"
         tarea.completada = False
         session.delete(cumplimiento)
         session.commit()

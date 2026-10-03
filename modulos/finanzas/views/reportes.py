@@ -3,7 +3,9 @@ Reportes de Finanzas (/finanzas/reportes), desde el ícono 📊 de la lista de p
 
   1. Total del concepto al cierre, con su meta y cuánto falta
   2. ¿Dónde está el dinero?  -> pastel + tabla por plataforma (monto y %)
-  3. Ahorro mensual          -> línea del acumulado + tabla mes a mes
+  3. ¿Aportado o rendimiento? -> dona: cuánto del total pusiste tú y cuánto
+                                generó el dinero (rendimientos) en el periodo
+  4. Ahorro mensual          -> línea del acumulado + tabla mes a mes
 
 Se filtra por periodo (desplegable) y por concepto (chips), igual que en tu Excel:
 primero el concepto, después cómo se reparte entre plataformas.
@@ -33,6 +35,7 @@ from modulos.finanzas.colores import (
 from modulos.finanzas.exportador import export_file_name, export_period
 from modulos.finanzas.models import Inversion, Movimiento, Periodo
 from modulos.finanzas.services import (
+    contribution_split,
     distribution_by_platform,
     money,
     monthly_savings,
@@ -190,8 +193,11 @@ class ReportsView:
         self.contenido.controls = [
             self._total_card(periodo, concepto),
             self._distribution_section(periodo),
+            self._contribution_section(periodo),
             self._monthly_section(periodo),
         ]
+        # Sin rendimientos (p. ej. Gastos) la sección de aportado no dice nada
+        self.contenido.controls = [c for c in self.contenido.controls if c is not None]
 
     def _card(self, titulo: str, subtitulo: str, *controles, on_click=None) -> ft.Control:  # propio
         """Sección con fondo. on_click: tocar cualquier parte que no sea la gráfica."""
@@ -356,7 +362,126 @@ class ReportsView:
                           "Reparto por plataforma al cierre · toca una rebanada",
                           zona, tabla, on_click=lambda e: select(None))
 
-    # --- 3. Ahorro mensual ------------------------------------------------
+    # --- 3. Aportado vs rendimiento ---------------------------------------
+    def _contribution_section(self, periodo: Periodo) -> ft.Control | None:  # propio
+        """
+        Dona de 2 rebanadas: del total al cierre, cuánto pusiste tú (aportado)
+        y cuánto generó el dinero (rendimientos). Misma interacción que el pastel
+        de plataformas: tocar una rebanada (o su fila) la agranda y muestra su
+        tarjeta; tocar fuera la cierra.
+        None si el periodo no tiene rendimientos (no hay nada que comparar).
+        """
+        r = contribution_split(periodo, self.inversion_id)
+        if not r.rendimientos:
+            return None
+        paleta = self._palette()
+        # (nombre, monto, %, color) de cada rebanada
+        partes = [
+            ("Aportado por ti", r.aportado, r.porcentaje(r.aportado), paleta[0]),
+            ("Rendimientos", r.rendimientos, r.porcentaje(r.rendimientos), paleta[2]),
+        ]
+        titulo = "¿Aportado o rendimiento?"
+        subtitulo = "Lo que pusiste tú y lo que generó el dinero · toca una rebanada"
+
+        controles: list[ft.Control] = []
+        select = lambda indice: None  # noqa: E731  (sin dona no hay nada que resaltar)
+        if r.aportado > 0 and r.rendimientos > 0:
+            secciones = [
+                fch.PieChartSection(
+                    value=monto, color=color, radius=70,
+                    # % con 2 decimales, por FUERA de la rebanada (igual que el otro pastel)
+                    title=f"{pct:.2f}%",
+                    title_position=1.32,
+                    title_style=ft.TextStyle(size=11, color=ft.Colors.ON_SURFACE,
+                                             weight=ft.FontWeight.BOLD),
+                )
+                for _, monto, pct, color in partes
+            ]
+            dona = fch.PieChart(sections=secciones, sections_space=2,
+                                center_space_radius=40, height=300)
+
+            # Tarjeta flotante (fondo blanco, texto negro), como en "¿Dónde está el dinero?"
+            lbl_nombre = ft.Text(size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.BLACK)
+            lbl_monto = ft.Text(size=13, color=ft.Colors.BLACK)
+            lbl_pct = ft.Text(size=12, color="#52514e")
+            punto = ft.Container(width=10, height=10, border_radius=5)
+            tarjeta = ft.Container(
+                visible=False, top=0, left=0,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+                border_radius=8,
+                bgcolor=ft.Colors.WHITE,
+                shadow=ft.BoxShadow(blur_radius=8,
+                                    color=ft.Colors.with_opacity(0.25, ft.Colors.BLACK)),
+                content=ft.Column(spacing=2, tight=True, controls=[
+                    ft.Row([punto, lbl_nombre], spacing=6, tight=True),
+                    lbl_monto,
+                    lbl_pct,
+                ]),
+            )
+
+            def select(indice: int | None):  # propio
+                """Resalta la rebanada tocada (más grande) y muestra su tarjeta."""
+                for n, seccion in enumerate(secciones):
+                    seccion.radius = 80 if n == indice else 70
+                if indice is None:
+                    tarjeta.visible = False
+                else:
+                    nombre, monto, pct, color = partes[indice]
+                    punto.bgcolor = color
+                    lbl_nombre.value = nombre
+                    lbl_monto.value = money(monto)
+                    lbl_pct.value = f"{pct:.2f}% del total"
+                    tarjeta.visible = True
+                zona.update()
+
+            def on_event(e):  # propio
+                if e.section_index is not None and e.section_index >= 0:
+                    select(e.section_index)
+                elif e.type in (fch.ChartEventType.TAP_UP, fch.ChartEventType.TAP_DOWN):
+                    select(None)
+
+            dona.on_event = on_event
+            tarjeta.on_click = lambda e: select(None)
+            zona = ft.Stack(height=300, controls=[dona, tarjeta])
+            controles.append(zona)
+        else:
+            # Retiraste más de lo que aportaste: una dona no puede dibujar negativos
+            controles.append(ft.Text(
+                "Retiraste más de lo que aportaste en este periodo; "
+                "solo se muestra la tabla.", size=12, color=ft.Colors.OUTLINE))
+
+        def fila(color, nombre, monto, pct, negrita=False):  # propio
+            peso = ft.FontWeight.BOLD if negrita else None
+            return ft.Row(controls=[
+                ft.Container(width=12, height=12, border_radius=3, bgcolor=color),
+                ft.Text(nombre, expand=True, weight=peso),
+                ft.Text(money(monto), width=120, text_align=ft.TextAlign.RIGHT, weight=peso),
+                ft.Text(f"{pct:.2f}%", width=72, text_align=ft.TextAlign.RIGHT, weight=peso,
+                        no_wrap=True),
+            ])
+
+        tabla = ft.Column(spacing=6, controls=[
+            ft.Row(controls=[
+                ft.Container(width=12),
+                ft.Text("Concepto", expand=True, size=12, color=ft.Colors.OUTLINE),
+                ft.Text("Monto", width=120, text_align=ft.TextAlign.RIGHT, size=12,
+                        color=ft.Colors.OUTLINE),
+                ft.Text("%", width=72, text_align=ft.TextAlign.RIGHT, size=12,
+                        color=ft.Colors.OUTLINE),
+            ]),
+            # Tocar una fila también resalta su rebanada
+            *[ft.Container(
+                content=fila(color, nombre, monto, pct),
+                ink=True,
+                on_click=lambda e, n=n: select(n),
+            ) for n, (nombre, monto, pct, color) in enumerate(partes)],
+            ft.Divider(height=1),
+            fila(ft.Colors.TRANSPARENT, "Total al cierre", r.total, 100, True),
+        ])
+        controles.append(tabla)
+        return self._card(titulo, subtitulo, *controles, on_click=lambda e: select(None))
+
+    # --- 4. Ahorro mensual ------------------------------------------------
     def _monthly_section(self, periodo: Periodo) -> ft.Control:  # propio
         meses = monthly_savings(periodo, self.inversion_id)
         if not meses:

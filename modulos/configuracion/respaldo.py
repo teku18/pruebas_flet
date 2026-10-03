@@ -46,6 +46,8 @@ CLAVE_ULTIMO = "respaldo_ultimo"   # timestamp del último respaldo o restauraci
 CLAVE_IGNORADOS = "respaldo_ignorados"  # zips de otro equipo a los que dijiste "no"
 CLAVE_CADA = "respaldo_cada"            # número: cada 15…
 CLAVE_PERIODO = "respaldo_periodo"      # …"dia" | "semana" | "mes" | "hora"
+CLAVE_ENVIADO = "respaldo_enviado"      # celular: timestamp de la última copia mandada a Drive
+DIAS_RECORDATORIO = 7                   # celular: avisar si llevas más de esto sin mandarla
 # expanduser no truena aunque el sistema no tenga "home" (celular)
 CASA = os.path.expanduser("~")
 # En el celular no hay ~/Respaldos: los zips quedan en la carpeta privada de la app
@@ -93,13 +95,23 @@ class BackupSection:
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             self.lbl_proximo,
         ])
-        self.btn_respaldar = ft.Button("Respaldar ahora", icon=ft.Icons.BACKUP,
-                                       on_click=self.backup_now)
+        # Compu: respalda en la carpeta (rclone la sube sola a Drive).
+        # Celular: no hay subida automática -> UN botón que respalda y abre
+        # el selector de Android para mandarlo a Drive en el mismo paso.
+        if ES_MOVIL:
+            self.btn_respaldar = ft.Button("Respaldar y mandar a Drive", icon=ft.Icons.CLOUD_UPLOAD,
+                                           on_click=self.backup_and_send)
+        else:
+            self.btn_respaldar = ft.Button("Respaldar ahora", icon=ft.Icons.BACKUP,
+                                           on_click=self.backup_now)
+        self.enviado = 0.0
 
         self.controles = [
             ft.Text("Respaldo", size=18, weight=ft.FontWeight.BOLD),
-            ft.Text("Un zip con tu BD y adjuntos. Guárdalo en una carpeta que se suba "
-                    "a Drive y podrás restaurarlo en otro equipo.",
+            ft.Text("Un zip con TODA tu información (BD de todos los módulos y adjuntos). "
+                    + ("En el celular se respalda solo dentro de la app; para tenerlo en "
+                       "Drive usa «Respaldar y mandar a Drive»." if ES_MOVIL else
+                       "Se guarda en tu carpeta y rclone lo sube a Drive."),
                     size=12, color=ft.Colors.OUTLINE),
             ft.Row([ft.Icon(ft.Icons.FOLDER, size=18), ft.Container(self.lbl_carpeta, expand=True),
                     # En el celular la carpeta es la interna de la app (no se cambia)
@@ -135,6 +147,7 @@ class BackupSection:
         self.cada = int(await pref_get(self.prefs, CLAVE_CADA) or 1)
         periodo = await pref_get(self.prefs, CLAVE_PERIODO)
         self.periodo = periodo if periodo in backup.PERIODOS else "dia"
+        self.enviado = float(await pref_get(self.prefs, CLAVE_ENVIADO) or 0)
         self.sw_auto.value = self.auto
         self.txt_cada.value, self.dd_periodo.value = str(self.cada), self.periodo
         self._refresh()
@@ -158,6 +171,7 @@ class BackupSection:
             self._offer_restore()
         else:
             self.check_other_device()  # si hay aviso, vuelve a pausar
+            self._remind_drive()
         await self.check_drive()
 
     def _drive_row(self) -> ft.Control:  # propio
@@ -165,37 +179,77 @@ class BackupSection:
         Compu:   estado de rclone + [Sincronizar]
         Celular: no hay rclone -> [Guardar copia en…] (Android deja elegir Google Drive)
         """
-        if ES_MOVIL:
-            self.ico_drive.icon, self.ico_drive.color = ft.Icons.CLOUD_UPLOAD, ft.Colors.PRIMARY
-            self.lbl_drive.value = "Para tenerlo en Drive: «Guardar copia en…» y elige Google Drive."
-            boton = ft.TextButton("Guardar copia en…", on_click=self.save_copy)
-        else:
-            boton = ft.TextButton("Sincronizar", on_click=self.sync_drive)
+        if ES_MOVIL:  # el estado lo pone _drive_status_mobile (no hay botón aparte)
+            return ft.Row([self.ico_drive, ft.Container(self.lbl_drive, expand=True)])
+        boton = ft.TextButton("Sincronizar", on_click=self.sync_drive)
         return ft.Row([self.ico_drive, ft.Container(self.lbl_drive, expand=True), boton])
 
-    async def save_copy(self, e=None):  # propio
+    def _dias_sin_enviar(self) -> int | None:  # propio
+        """Días desde la última copia mandada a Drive desde el celular (None = nunca)."""
+        if not self.enviado:
+            return None
+        return int((time.time() - self.enviado) // 86400)
+
+    def _drive_status_mobile(self):  # propio
+        """Celular: 'Última copia en Drive: 29/09 (hace 3 días)' (naranja si ya toca)."""
+        dias = self._dias_sin_enviar()
+        if dias is None:
+            texto, color = "Aún no mandas ninguna copia a Drive.", ft.Colors.ORANGE
+        else:
+            cuando = "hoy" if dias == 0 else "ayer" if dias == 1 else f"hace {dias} días"
+            texto = f"Última copia en Drive: {datetime.fromtimestamp(self.enviado):%d/%m/%Y} ({cuando})"
+            color = ft.Colors.ORANGE if dias >= DIAS_RECORDATORIO else ft.Colors.GREEN
+        self.lbl_drive.value = texto
+        self.ico_drive.icon = ft.Icons.CLOUD_DONE if color == ft.Colors.GREEN else ft.Icons.CLOUD_UPLOAD
+        self.ico_drive.color = color
+
+    def _remind_drive(self):  # propio
+        """Celular: al abrir, si llevas DIAS_RECORDATORIO o más sin mandar a Drive, avisa."""
+        if not ES_MOVIL:
+            return
+        dias = self._dias_sin_enviar()
+        if dias is not None and dias < DIAS_RECORDATORIO:
+            return
+        texto = ("Aún no has mandado tu respaldo a Drive" if dias is None
+                 else f"Hace {dias} días que no mandas tu respaldo a Drive")
+        self.page.show_dialog(ft.SnackBar(
+            ft.Text(texto), action="Mandar ahora", duration=8000,
+            on_action=lambda e: self.page.run_task(self.backup_and_send),
+        ))
+
+    async def backup_and_send(self, e=None):  # propio
         """
-        Celular: manda el respaldo más reciente a donde elijas (Google Drive,
-        Descargas, otra app…) con el selector de Android. Si no hay, lo crea.
+        Celular, un solo paso: crea el respaldo AHORA (con todo lo de hoy) y abre
+        el selector de Android para guardarlo donde elijas (Google Drive…).
         """
-        respaldos = backup.list_backups(Path(self.carpeta))
-        ruta = respaldos[0].ruta if respaldos else await self._do_backup("manual")
+        try:
+            ruta = await self._do_backup("manual")
+        except Exception as ex:  # noqa: BLE001
+            notify(self.page, f"No se pudo respaldar: {ex}")
+            return
         if ruta is None:
             return
         destino = await service(self.page, ft.FilePicker).save_file(
-            dialog_title="Guardar copia del respaldo",
+            dialog_title="Guarda el respaldo en Google Drive",
             file_name=ruta.name,
             file_type=ft.FilePickerFileType.CUSTOM,
             allowed_extensions=["zip"],
             src_bytes=ruta.read_bytes(),  # Flet escribe el archivo donde elijas
         )
-        if destino:
-            notify(self.page, "Copia guardada ✓")
+        if not destino:
+            notify(self.page, "Respaldo creado en el celular (no se mandó a Drive)")
+            return
+        self.enviado = time.time()
+        await pref_set(self.prefs, CLAVE_ENVIADO, str(self.enviado))
+        self._refresh()
+        notify(self.page, "Respaldo guardado ✓")
+        self.page.update()
 
     def _refresh(self):  # propio
         """Textos: carpeta y cuándo fue el último respaldo."""
         if ES_MOVIL:
             self.lbl_carpeta.value = "Carpeta interna de la app"
+            self._drive_status_mobile()
         elif self.carpeta.startswith(CASA + os.sep):
             self.lbl_carpeta.value = "~" + self.carpeta[len(CASA):]   # solo el inicio
         else:
