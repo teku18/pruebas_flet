@@ -6,16 +6,23 @@ Modelos del módulo Desarrollo (el "roadmap" de la propia app):
   Pendiente  -> una tarea, error o comentario sobre ese módulo, con su
                 propia prioridad. Al marcarlo hecho guarda cuándo.
 
-  ModuloApp 1 ──< N Pendiente 1 ──< N DevAdjunto   (archivos en data/desarrollo/)
+  ModuloApp 1 ──< N Pendiente 1 ──< N Adjunto   (tabla única "adjuntos", modelo
+                                                  "dev.pendiente"; archivos en
+                                                  data/desarrollo/<pendiente_id>/)
 """
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
+from core.adjuntos import Adjunto, attachments_relation
 from core.database import Base
 from core.mixins import CrudMixin
-from core.storage import delete_folder
+from core.storage import DATA_DIR, delete_folder
+
+# Adjuntos de los pendientes: modelo en la tabla "adjuntos" y carpeta de archivos
+MODELO_ADJUNTOS = "dev.pendiente"
+DEV_ADJUNTOS_DIR = DATA_DIR / "desarrollo"
 
 PRIORIDAD_SELECTION = {
     "alta": "Alta",
@@ -72,10 +79,9 @@ class ModuloApp(CrudMixin, Base):
 
     @classmethod
     def delete(cls, registro_id: int) -> None:  # propio
-        """Filas en cascada (pendientes y adjuntos) + las carpetas de archivos."""
-        from modulos.desarrollo.models.adjunto import DEV_ADJUNTOS_DIR
-
+        """Filas en cascada (pendientes y sus adjuntos) + las carpetas de archivos."""
         ids = [p.id for p in Pendiente.search(Pendiente.modulo_id == registro_id)]
+        Adjunto.delete_for(MODELO_ADJUNTOS, *ids)
         super().delete(registro_id)
         for pendiente_id in ids:
             delete_folder(DEV_ADJUNTOS_DIR / str(pendiente_id))
@@ -100,9 +106,8 @@ class Pendiente(CrudMixin, Base):
     hecho_en: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     modulo: Mapped["ModuloApp"] = relationship(back_populates="pendientes")
-    adjuntos: Mapped[list["DevAdjunto"]] = relationship(  # noqa: F821
-        back_populates="pendiente", cascade="all, delete-orphan"
-    )
+    # Solo lectura: se agregan/quitan con Adjunto.create / Adjunto.delete
+    adjuntos: Mapped[list[Adjunto]] = attachments_relation("Pendiente", MODELO_ADJUNTOS)
 
     @validates("tipo")
     def _validate_tipo(self, key, value):  # propio
@@ -133,9 +138,8 @@ class Pendiente(CrudMixin, Base):
 
     @classmethod
     def delete(cls, registro_id: int) -> None:  # propio
-        """Filas (cascada) + la carpeta con sus archivos."""
-        from modulos.desarrollo.models.adjunto import DEV_ADJUNTOS_DIR
-
+        """La fila, sus adjuntos y la carpeta con sus archivos."""
+        Adjunto.delete_for(MODELO_ADJUNTOS, registro_id)
         super().delete(registro_id)
         delete_folder(DEV_ADJUNTOS_DIR / str(registro_id))
 

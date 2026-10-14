@@ -16,9 +16,9 @@ Además instala en TODAS las pantallas el botón flotante 📷 para capturar o
 grabar la pantalla y reportarlo como pendiente (views/herramienta.py).
 
 Capas:
-  models/       ModuloApp, Pendiente, DevAdjunto          (la despensa)
+  models/       ModuloApp, Pendiente (adjuntos: core/adjuntos.py)  (la despensa)
   services.py   overview, pending_by_priority, toggle     (el cocinero)
-  capturas.py   bandeja de capturas (PNG) y grabaciones (GIF)
+  (la bandeja de capturas vive en core/capturas.py: la usan varios módulos)
   exportador.py Excel: Resumen + una hoja por módulo
   views/        RoadmapView, ModuleView, formularios,
                 CapturesView, CaptureTool (botón flotante) (el mesero)
@@ -84,7 +84,7 @@ class DesarrolloModule(AppModule):
         [Reportar]: pendiente nuevo con las capturas adjuntas y, si todas se
         tomaron en el mismo módulo, ese módulo ya elegido ('agenda' -> Agenda).
         """
-        from modulos.desarrollo.capturas import slug
+        from core.capturas import slug
         from modulos.desarrollo.models import ModuloApp
 
         origenes = {c.origen for c in capturas if c.origen}

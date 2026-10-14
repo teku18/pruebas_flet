@@ -1,14 +1,21 @@
-"""Modelos Entrada (un avance de la bitácora) y Adjunto (evidencia de la entrada)."""
+"""
+Modelo Entrada: un avance de la bitácora de un proyecto.
+
+Su evidencia (fotos, PDFs, capturas) va en la tabla única "adjuntos"
+(core/adjuntos.py) con modelo "proyecto.entrada"; los archivos viven en
+data/adjuntos/<proyecto_id>/<entrada_id>/.
+"""
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
+from core.adjuntos import Adjunto, attachments_relation
 from core.database import Base, SessionLocal
 from core.mixins import CrudMixin
-from core.storage import delete_file
-
 from modulos.proyectos.models.catalogos import TipoEntrada
+
+MODELO_ADJUNTOS = "proyecto.entrada"
 
 # El tipo de entrada es un catálogo (TipoEntrada, en Ajustes). Los que tienen
 # es_hito son los momentos importantes: con ellos se arma la línea de tiempo
@@ -28,9 +35,8 @@ class Entrada(CrudMixin, Base):
     tipo: Mapped["TipoEntrada"] = relationship(lazy="joined")  # viene con la entrada
 
     proyecto: Mapped["Proyecto"] = relationship(back_populates="entradas")  # noqa: F821
-    adjuntos: Mapped[list["Adjunto"]] = relationship(
-        back_populates="entrada", cascade="all, delete-orphan"
-    )
+    # Solo lectura: se agregan/quitan con Adjunto.create / Adjunto.delete
+    adjuntos: Mapped[list[Adjunto]] = attachments_relation("Entrada", MODELO_ADJUNTOS)
 
     @property
     def tipo_label(self) -> str:  # propio
@@ -67,35 +73,9 @@ class Entrada(CrudMixin, Base):
 
     @classmethod
     def delete(cls, registro_id: int) -> None:  # propio
-        """Además de las filas, borra los archivos de sus adjuntos."""
-        entrada = cls.get_with_attachments(registro_id)
-        rutas = [a.ruta for a in entrada.adjuntos] if entrada else []
+        """Además de la fila, borra sus adjuntos (filas y archivos)."""
+        Adjunto.delete_for(MODELO_ADJUNTOS, registro_id)
         super().delete(registro_id)
-        for ruta in rutas:
-            delete_file(ruta)
 
     def __repr__(self) -> str:
         return f"<Entrada id={self.id} proyecto={self.proyecto_id} {self.fecha_hora}>"
-
-
-class Adjunto(CrudMixin, Base):
-    __tablename__ = "proyecto_adjuntos"
-    _orden = "id asc"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    entrada_id: Mapped[int] = mapped_column(ForeignKey("proyecto_entradas.id"), nullable=False)
-    nombre: Mapped[str] = mapped_column(String(255), nullable=False)   # nombre original
-    ruta: Mapped[str] = mapped_column(String(500), nullable=False)     # relativa a data/
-    tamano: Mapped[int | None] = mapped_column(Integer, nullable=True)  # bytes
-
-    entrada: Mapped["Entrada"] = relationship(back_populates="adjuntos")
-
-    @classmethod
-    def delete(cls, registro_id: int) -> None:  # propio
-        adjunto = cls.get(registro_id)
-        super().delete(registro_id)
-        if adjunto:
-            delete_file(adjunto.ruta)
-
-    def __repr__(self) -> str:
-        return f"<Adjunto id={self.id} {self.nombre}>"

@@ -34,8 +34,8 @@ import time
 
 import flet as ft
 
+from core.capturas import Captura, save_recording, save_screenshot
 from core.ui import notify
-from modulos.desarrollo.capturas import Captura, save_recording, save_screenshot
 from modulos.desarrollo.views.pincel import DrawLayer
 
 INTERVALO = 0.4        # segundos entre cuadros de la grabación (~2.5 por segundo)

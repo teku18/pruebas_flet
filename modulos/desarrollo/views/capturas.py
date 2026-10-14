@@ -13,11 +13,11 @@ Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
 import flet as ft
 
+from core.adjuntos_ui import show_preview
+from core.capturas import Captura, delete_capture, list_captures
 from core.storage import human_size
 from core.ui import confirm, notify
 from modulos.desarrollo import routes
-from modulos.desarrollo.capturas import Captura, delete_capture, list_captures
-from modulos.desarrollo.views.adjuntos import show_preview
 
 
 class CapturesView:

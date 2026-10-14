@@ -6,18 +6,18 @@ Pantallas de un proyecto abierto:
   /proyectos/entrada  -> una entrada: nuevo, ver o editar, con sus adjuntos.
                          El "+" junto al Tipo crea un tipo nuevo sin salir.
 
-Adjuntos: se eligen con FilePicker, se copian a data/adjuntos/<proyecto>/<entrada>/
-y la BD guarda solo la ruta. Mientras editas, los cambios de adjuntos quedan
+Adjuntos: la misma caja de toda la app (core/adjuntos_ui.py): "Adjuntar archivo"
+y "De mis capturas". Se copian a data/adjuntos/<proyecto>/<entrada>/ y la fila
+va a la tabla única "adjuntos". Mientras editas, los cambios quedan
 "pendientes" y se aplican al guardar (Cancelar los descarta).
 
 Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
 from datetime import date, datetime
-from pathlib import Path
 
 import flet as ft
 
-from core.storage import absolute_path, human_size, save_file
+from core.adjuntos_ui import AttachmentsBox
 from core.ui import (
     DateField,
     add_button,
@@ -25,32 +25,18 @@ from core.ui import (
     delete_button,
     edit_button,
     notify,
-    service,
     short_date,
     swipe_to_delete,
 )
 from modulos.proyectos import routes
 from modulos.proyectos.models import (
     ADJUNTOS_DIR,
-    Adjunto,
+    MODELO_ADJUNTOS,
     Entrada,
     Proyecto,
     TipoEntrada,
 )
 from modulos.proyectos.views.comun import catalog_dialog, icon_of, view_toggle
-
-EXT_IMAGEN = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".bmp"}
-
-
-def attachment_icon(nombre: str):  # propio
-    """Ícono según la extensión del archivo."""
-    ext = Path(nombre).suffix.lower()
-    if ext in EXT_IMAGEN:
-        return ft.Icons.IMAGE
-    if ext == ".pdf":
-        return ft.Icons.PICTURE_AS_PDF
-    return ft.Icons.INSERT_DRIVE_FILE
-
 
 class LogView:
     def __init__(self, page: ft.Page, on_show_project):
@@ -66,14 +52,11 @@ class LogView:
         self.tipo_id: int | None = None        # filtro de la bitácora (None = todos)
         self.tareas = ProjectTasks(page, on_changed=self.refresh)
 
-        # Adjuntos del formulario: lista de dicts
-        #   {"id": int|None, "nombre", "tamano", "ruta": str|None,
-        #    "origen": str|None, "datos": bytes|None}
-        # id=None -> todavía no se guarda (pendiente)
-        self.adjuntos: list[dict] = []
-        self.adjuntos_borrar: list[int] = []  # ids a borrar al guardar
-
-        # Servicios de Flet (FilePicker, UrlLauncher): se piden con service() al usarlos
+        # Caja de adjuntos (la misma de Desarrollo y de las tareas)
+        self.adjuntos = AttachmentsBox(
+            page, MODELO_ADJUNTOS,
+            lambda entrada_id: ADJUNTOS_DIR / str(self.proyecto.id) / str(entrada_id),
+        )
 
         self._build_form()
         self._build_list()
@@ -270,12 +253,6 @@ class LogView:
             label="Notas del avance", multiline=True, min_lines=4, max_lines=12, expand=True
         )
 
-        self.btn_adjuntar = ft.OutlinedButton(
-            "Adjuntar", icon=ft.Icons.ATTACH_FILE, on_click=self.pick_files
-        )
-        self.col_adjuntos = ft.Column(spacing=4)
-        self.lbl_sin_adjuntos = ft.Text("Sin adjuntos", italic=True, size=12)
-
         self.lbl_titulo_form = ft.Text("Nueva entrada")
         self.btn_guardar = ft.Button("Guardar", icon=ft.Icons.SAVE, on_click=self.save)
         btn_cancelar = ft.TextButton("Cancelar", icon=ft.Icons.CLOSE, on_click=self.cancel)
@@ -300,15 +277,7 @@ class LogView:
                             self.fila_tipo,
                             # Dentro de un Row con expand=True ocupa todo el ancho
                             ft.Row([self.txt_notas]),
-                            ft.Row(
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                                controls=[
-                                    ft.Text("Adjuntos", size=16, weight=ft.FontWeight.BOLD),
-                                    self.btn_adjuntar,
-                                ],
-                            ),
-                            self.lbl_sin_adjuntos,
-                            self.col_adjuntos,
+                            self.adjuntos.control,
                             self.fila_botones,
                         ],
                     )
@@ -348,7 +317,7 @@ class LogView:
         self.campo_fecha.set_enabled(not lectura)
         self.dd_tipo.disabled = lectura
         self.btn_nuevo_tipo.visible = not lectura
-        self.btn_adjuntar.visible = not lectura
+        self.adjuntos.set_editable(not lectura)
 
         self.btn_barra_editar.visible = lectura
         self.btn_barra_eliminar.visible = lectura
@@ -362,103 +331,13 @@ class LogView:
         else:
             self.lbl_titulo_form.value = "Editar entrada"
             self.btn_guardar.content = "Actualizar"
-        self._render_attachments()
-
-    # --- Adjuntos en pantalla -------------------------------------------
-    def _render_attachments(self):  # propio
-        editable = self.modo != "ver"
-        self.col_adjuntos.controls = [
-            self._attachment_row(i, adj, editable) for i, adj in enumerate(self.adjuntos)
-        ]
-        self.lbl_sin_adjuntos.visible = not self.adjuntos
-
-    def _attachment_row(self, indice: int, adj: dict, editable: bool) -> ft.Control:  # propio
-        detalle = human_size(adj["tamano"])
-        if adj["id"] is None:
-            detalle += " · se guarda al dar Guardar"
-        acciones = []
-        if editable:
-            acciones.append(
-                ft.IconButton(
-                    ft.Icons.CLOSE,
-                    tooltip="Quitar",
-                    on_click=lambda e, i=indice: self.remove_attachment(i),
-                )
-            )
-        elif adj["ruta"]:
-            acciones.append(
-                ft.IconButton(
-                    ft.Icons.OPEN_IN_NEW,
-                    tooltip="Abrir",
-                    on_click=lambda e, r=adj["ruta"]: self.page.run_task(
-                        self.open_attachment, r
-                    ),
-                )
-            )
-        return ft.Container(
-            padding=ft.Padding.only(left=8),
-            border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.ON_SURFACE),
-            content=ft.Row(
-                controls=[
-                    ft.Icon(attachment_icon(adj["nombre"]), color=ft.Colors.PRIMARY),
-                    ft.Column(
-                        expand=True,
-                        spacing=0,
-                        controls=[
-                            ft.Text(
-                                adj["nombre"], max_lines=1, overflow=ft.TextOverflow.ELLIPSIS
-                            ),
-                            ft.Text(detalle, size=11, color=ft.Colors.OUTLINE),
-                        ],
-                    ),
-                    *acciones,
-                ],
-            ),
-        )
-
-    async def pick_files(self, e=None):  # propio
-        """Botón Adjuntar: abre el selector de archivos del sistema."""
-        archivos = await service(self.page, ft.FilePicker).pick_files(
-            dialog_title="Elige la evidencia", allow_multiple=True,
-            with_data=True,  # el contenido: desde el celular la ruta no sirve aquí
-        )
-        for f in archivos or []:
-            self.adjuntos.append(
-                {"id": None, "nombre": f.name, "tamano": f.size, "ruta": None,
-                 # la ruta solo si existe aquí (desde el celular llegan los bytes)
-                 "origen": f.path if f.path and Path(f.path).exists() else None,
-                 "datos": f.bytes}
-            )
-        self._render_attachments()
-        self.page.update()
-
-    def remove_attachment(self, indice: int):  # propio
-        adj = self.adjuntos.pop(indice)
-        if adj["id"] is not None:
-            self.adjuntos_borrar.append(adj["id"])  # se borra de verdad al guardar
-        self._render_attachments()
-        self.page.update()
-
-    async def open_attachment(self, ruta: str):  # propio
-        """Abre el archivo con la aplicación predeterminada del sistema."""
-        archivo = absolute_path(ruta)
-        if not archivo.exists():
-            notify(self.page, "No se encontró el archivo")
-            return
-        await service(self.page, ft.UrlLauncher).launch_url(archivo.as_uri())
 
     # --- Llenar / limpiar -------------------------------------------------
     def _fill(self, en: Entrada):  # propio
         self.campo_fecha.set_value(en.fecha_hora.date())
         self._new_type_dropdown(en.tipo_id)
         self.txt_notas.value = en.notas
-        self.adjuntos = [
-            {"id": a.id, "nombre": a.nombre, "tamano": a.tamano, "ruta": a.ruta,
-             "origen": None, "datos": None}
-            for a in en.adjuntos
-        ]
-        self.adjuntos_borrar = []
+        self.adjuntos.load(en.adjuntos)
 
     def clear_errors(self):  # propio
         self.txt_notas.error_text = None
@@ -468,8 +347,7 @@ class LogView:
         self.campo_fecha.set_value(date.today())
         self._new_type_dropdown(None)  # por si cambiaron los tipos en Ajustes
         self.txt_notas.value = ""
-        self.adjuntos = []
-        self.adjuntos_borrar = []
+        self.adjuntos.clear()
         self.registro = None
         self.modo = "nuevo"
         self._apply_mode()
@@ -528,7 +406,7 @@ class LogView:
                 entrada = Entrada.create(**valores)
             else:
                 entrada = Entrada.update(self.registro.id, **valores)
-            self._apply_attachment_changes(entrada.id)
+            self.adjuntos.apply(entrada.id)
         except Exception as ex:  # noqa: BLE001
             notify(self.page, f"Error al guardar: {ex}")
             return
@@ -544,29 +422,6 @@ class LogView:
             self._apply_mode()
             notify(self.page, "Entrada actualizada")
             self.page.update()
-
-    def _apply_attachment_changes(self, entrada_id: int):  # propio
-        """Guarda los adjuntos pendientes y borra los que se quitaron."""
-        for adjunto_id in self.adjuntos_borrar:
-            Adjunto.delete(adjunto_id)
-        self.adjuntos_borrar = []
-
-        carpeta = ADJUNTOS_DIR / str(self.proyecto.id) / str(entrada_id)
-        for adj in self.adjuntos:
-            if adj["id"] is not None:
-                continue
-            ruta = save_file(
-                Path(adj["origen"]) if adj["origen"] else None,
-                adj["datos"],
-                carpeta,
-                adj["nombre"],
-            )
-            Adjunto.create(
-                entrada_id=entrada_id,
-                nombre=adj["nombre"],
-                ruta=ruta.as_posix(),
-                tamano=adj["tamano"],
-            )
 
     # ==================================================================
     # Eliminar

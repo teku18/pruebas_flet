@@ -4,21 +4,23 @@ Formulario de un pendiente (tarea, error o comentario de un módulo):
   /desarrollo/modulo/pendiente  -> desde los pendientes de un módulo
 
 Siempre editable: [Guardar] y, si ya existe, el bote para eliminar.
-Adjuntos (archivos, imágenes, capturas y grabaciones): views/adjuntos.py.
+Adjuntos (archivos, imágenes, capturas y grabaciones): core/adjuntos_ui.py.
 Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
 import flet as ft
 
+from core.adjuntos_ui import AttachmentsBox
+from core.capturas import Captura
 from core.ui import confirm, delete_button, dropdown_options, notify
 from modulos.desarrollo import services
-from modulos.desarrollo.capturas import Captura
 from modulos.desarrollo.models import (
+    DEV_ADJUNTOS_DIR,
+    MODELO_ADJUNTOS,
     PRIORIDAD_SELECTION,
     TIPO_PENDIENTE_SELECTION,
     ModuloApp,
     Pendiente,
 )
-from modulos.desarrollo.views.adjuntos import AttachmentsBox
 
 
 class PendingFormView:
@@ -34,7 +36,8 @@ class PendingFormView:
                                       multiline=True, min_lines=3, max_lines=10)
         self.sw_hecho = ft.Switch(label="Hecho")
         self.lbl_fechas = ft.Text(size=12, color=ft.Colors.OUTLINE)
-        self.adjuntos = AttachmentsBox(page)
+        self.adjuntos = AttachmentsBox(page, MODELO_ADJUNTOS,
+                                       lambda pid: DEV_ADJUNTOS_DIR / str(pid))
 
         self.lbl_titulo = ft.Text("Nuevo pendiente")
         self.btn_guardar = ft.Button("Guardar", icon=ft.Icons.SAVE, on_click=self.save)

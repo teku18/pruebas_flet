@@ -11,6 +11,8 @@ Genera un .xlsx de UN periodo (opcionalmente de un solo concepto) con dos hojas:
   2. Reporte               -> lo mismo que la pantalla de Reportes:
        - Resumen: abre con, ingresos, gastos, cierra con (y meta/falta si es un concepto)
        - ¿Dónde está el dinero?  tabla por plataforma + gráfica de PASTEL
+       - ¿Aportado o rendimiento? lo que pusiste vs lo que generó + gráfica de DONA
+                                  (solo si el periodo tiene rendimientos, como en la app)
        - Ahorro mensual          tabla mes a mes + gráfica de LÍNEA del acumulado
 
 Las gráficas son nativas de Excel y leen las celdas de las tablas: si cambias
@@ -24,11 +26,12 @@ Regresa bytes (no escribe a disco): Flet los guarda con FilePicker.save_file,
 que así funciona igual en escritorio, web y celular.
 """
 import re
+import zipfile
 from datetime import date
 from io import BytesIO
 
 from openpyxl import Workbook
-from openpyxl.chart import LineChart, PieChart, Reference
+from openpyxl.chart import DoughnutChart, LineChart, PieChart, Reference
 from openpyxl.chart.label import DataLabelList
 from openpyxl.chart.marker import Marker
 from openpyxl.chart.series import DataPoint
@@ -36,9 +39,14 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from core.ui import MESES, short_date
-from modulos.finanzas.colores import AZUL, GRIS_OTRAS, platform_colors
+from modulos.finanzas.colores import AZUL, GRIS_OTRAS, PALETA_CLARO, platform_colors
 from modulos.finanzas.models import TIPO_SELECTION, Inversion, Movimiento, Periodo
-from modulos.finanzas.services import distribution_by_platform, monthly_savings, period_summary
+from modulos.finanzas.services import (
+    contribution_split,
+    distribution_by_platform,
+    monthly_savings,
+    period_summary,
+)
 
 # --- Formato -----------------------------------------------------------------
 FUENTE = "Arial"
@@ -86,6 +94,24 @@ def export_period(periodo: Periodo, inversion_id: int | None = None) -> bytes:  
 
     salida = BytesIO()
     libro.save(salida)
+    return _fix_label_format(salida.getvalue())
+
+
+def _fix_label_format(xlsx: bytes) -> bytes:  # propio
+    """
+    % con 2 decimales en las etiquetas de pastel y dona.
+    openpyxl escribe <numFmt formatCode="0.00%"/> SIN sourceLinked="0", y
+    entonces algunos programas (LibreOffice) usan el formato de la celda y
+    redondean a "4%". Aquí se agrega ese atributo dentro de las gráficas.
+    """
+    entrada, salida = zipfile.ZipFile(BytesIO(xlsx)), BytesIO()
+    with zipfile.ZipFile(salida, "w", zipfile.ZIP_DEFLATED) as z:
+        for item in entrada.infolist():
+            datos = entrada.read(item.filename)
+            if item.filename.startswith("xl/charts/"):
+                datos = datos.replace(b'formatCode="0.00%"/>',
+                                      b'formatCode="0.00%" sourceLinked="0"/>')
+            z.writestr(item, datos)
     return salida.getvalue()
 
 
@@ -154,6 +180,7 @@ def _report_sheet(hoja, periodo: Periodo, concepto: Inversion | None):  # propio
 
     fila = _summary_block(hoja, 4, periodo, concepto)
     fila = _distribution_block(hoja, fila + 2, periodo, concepto)
+    fila = _contribution_block(hoja, fila + 2, periodo, concepto)
     _monthly_block(hoja, fila + 2, periodo, concepto)
 
 
@@ -257,6 +284,70 @@ def _distribution_block(hoja, fila: int, periodo: Periodo,  # propio
     hoja.add_chart(pastel, f"F{encabezado - 2}")
 
     # El pastel ocupa ~16 filas: la siguiente sección empieza debajo de él
+    return max(total, encabezado + 14)
+
+
+def _contribution_block(hoja, fila: int, periodo: Periodo,  # propio
+                        concepto: Inversion | None) -> int:
+    """
+    ¿Aportado o rendimiento? (igual que en la app): del total al cierre,
+    cuánto pusiste tú y cuánto generó el dinero, con una DONA a la derecha.
+    Sin rendimientos en el periodo no se agrega nada (regresa la fila anterior).
+    """
+    r = contribution_split(periodo, concepto.id if concepto else None)
+    if not r.rendimientos:
+        return fila - 2  # sin sección: la siguiente queda donde iba
+    fila = _section_title(hoja, fila, "¿Aportado o rendimiento?",
+                          "Lo que pusiste tú y lo que generó el dinero (total al cierre)")
+    encabezado = fila
+    _table_header(hoja, encabezado, "Concepto", "Monto", "%")
+    primera, total = encabezado + 1, encabezado + 3
+    # Mismos colores que la dona de la app (azul = aportado, verde = rendimiento)
+    partes = [("Aportado por ti", r.aportado, PALETA_CLARO[0]),
+              ("Rendimientos", r.rendimientos, PALETA_CLARO[2])]
+    for i, (nombre, monto, color) in enumerate(partes):
+        f = primera + i
+        hoja.cell(f, 1).fill = PatternFill("solid", fgColor=color.lstrip("#").upper())
+        hoja.cell(f, 2, nombre).font = _font()
+        hoja.cell(f, 3, monto).number_format = PESOS
+        hoja.cell(f, 4, f"=IF($C${total}=0,0,C{f}/$C${total})").number_format = PORCENTAJE
+        hoja.cell(f, 3).font = hoja.cell(f, 4).font = _font()
+    hoja.cell(total, 2, "Total al cierre")
+    hoja.cell(total, 3, f"=SUM(C{primera}:C{total - 1})").number_format = PESOS
+    hoja.cell(total, 4, f"=SUM(D{primera}:D{total - 1})").number_format = PORCENTAJE
+    for col in (2, 3, 4):
+        hoja.cell(total, col).font = _font(bold=True)
+        hoja.cell(total, col).border = Border(top=LINEA)
+
+    # Si retiraste más de lo que aportaste, una dona no puede dibujar negativos
+    if r.aportado <= 0:
+        hoja.cell(total + 1, 2, "Retiraste más de lo que aportaste: solo va la tabla.").font = \
+            _font(size=9, italic=True, color=GRIS_TEXTO)
+        return total + 1
+
+    # --- Dona: lee Concepto (B) y Monto (C), sin el total ------------------
+    dona = DoughnutChart(holeSize=55)
+    dona.title = "Aportado vs rendimiento"
+    dona.add_data(Reference(hoja, min_col=3, min_row=encabezado, max_row=total - 1),
+                  titles_from_data=True)
+    dona.set_categories(Reference(hoja, min_col=2, min_row=primera, max_row=total - 1))
+    serie = dona.series[0]
+    for i, (_, _, color) in enumerate(partes):
+        punto = DataPoint(idx=i)
+        punto.graphicalProperties.solidFill = color.lstrip("#")
+        punto.graphicalProperties.line.solidFill = "FFFFFF"
+        serie.dPt.append(punto)
+    serie.dLbls = DataLabelList()
+    serie.dLbls.showPercent = True   # % con 2 decimales, como en la app
+    serie.dLbls.showVal = serie.dLbls.showCatName = serie.dLbls.showSerName = False
+    serie.dLbls.numFmt = "0.00%"
+    # (Sin "position": Excel no acepta etiquetas por fuera en una dona y marca
+    #  el archivo como dañado.)
+    dona.legend.position = "r"
+    dona.width, dona.height = 14, 8   # cm, igual que el pastel
+    hoja.add_chart(dona, f"F{encabezado - 2}")
+
+    # La dona ocupa ~16 filas: la siguiente sección empieza debajo de ella
     return max(total, encabezado + 14)
 
 

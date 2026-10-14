@@ -33,6 +33,10 @@ ES_MOVIL = bool(os.getenv("ANDROID_ROOT") or os.getenv("ANDROID_DATA")) or sys.p
 # por eso solo se usa en el celular, si no la BD de la compu "desaparecería".
 _DATOS_APP = os.getenv("FLET_APP_STORAGE_DATA")
 DATA_ROOT = Path(_DATOS_APP) if ES_MOVIL and _DATOS_APP else ROOT_DIR
+# Solo para pruebas (scripts/verificar_respaldo.py): trabajar en una carpeta
+# desechable sin tocar tu BD real. La app normal nunca define CK_DATA_ROOT.
+if os.getenv("CK_DATA_ROOT"):
+    DATA_ROOT = Path(os.environ["CK_DATA_ROOT"])
 DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
 # El archivo .db: en la compu, junto a main.py
@@ -61,6 +65,7 @@ def import_models():  # propio
     Alembic lo usa para comparar tus modelos contra la BD (--autogenerate).
     Al crear un módulo con modelos, agrega aquí su import.
     """
+    import core.adjuntos  # noqa: F401  (tabla única de adjuntos, de todos los módulos)
     import modulos.finanzas.models  # noqa: F401
     import modulos.proyectos.models  # noqa: F401
     import modulos.agenda.models  # noqa: F401

@@ -1,5 +1,31 @@
 # Cambios de ControlKraken
 
+## 1.2.0 — 2026-10-14
+
+### Nuevo
+- **Adjuntos en las tareas de proyecto**: el formulario de la tarea trae
+  "Adjuntar archivo" y "De mis capturas" (igual que Desarrollo). La lista y el
+  Kanban muestran 📎 n. Los archivos van a `data/tareas/<id>/`.
+- **La bitácora gana "De mis capturas"**: usa la misma caja de adjuntos que
+  Desarrollo (antes tenía su propia copia del código).
+- **Excel de Finanzas · ¿Aportado o rendimiento?**: tabla con montos y % y una
+  gráfica de dona, con los mismos colores de la app. Solo si el periodo tiene
+  rendimientos.
+- Excel de Finanzas: los % de las gráficas de pastel y dona salen con **2
+  decimales** en cualquier programa (antes LibreOffice los redondeaba a "4%").
+- `scripts/verificar_respaldo.py`: mete un registro en CADA tabla, respalda,
+  restaura como en un equipo nuevo y compara tablas y archivos.
+- `pruebas/notificaciones/`: app de prueba aparte para saber si los avisos
+  con la app cerrada funcionan con Flet 1.0 (todavía no va en la Agenda).
+
+### Cambios
+- **Una sola tabla de adjuntos** para toda la app (`adjuntos`, como
+  `ir.attachment` de Odoo): migración 0012. Lo que había en `dev_adjuntos` y
+  `proyecto_adjuntos` se copia ahí; los archivos NO se mueven.
+- La bandeja de capturas y la caja de adjuntos pasan a `core/` (las usan
+  varios módulos).
+- `CK_DATA_ROOT` (solo para pruebas): trabaja en otra carpeta sin tocar tu BD.
+
 ## 1.1.0 — 2026-10-02
 
 ### Nuevo

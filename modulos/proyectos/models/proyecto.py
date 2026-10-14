@@ -130,11 +130,15 @@ class Proyecto(CrudMixin, Base):
     # --- Borrar también sus archivos ----------------------------------
     @classmethod
     def delete(cls, registro_id: int) -> None:  # propio
-        """Además de las filas (cascade), borra la carpeta de adjuntos y sus tareas."""
+        """Además de las filas (cascade), borra adjuntos, su carpeta y sus tareas."""
         # Import aquí adentro: la Agenda ya importa Proyectos, así no se enciclan
+        from core.adjuntos import Adjunto
         from modulos.agenda.services import delete_project_tasks
+        from modulos.proyectos.models.entrada import MODELO_ADJUNTOS, Entrada
 
         delete_project_tasks(registro_id)
+        entradas = [e.id for e in Entrada.search(Entrada.proyecto_id == registro_id)]
+        Adjunto.delete_for(MODELO_ADJUNTOS, *entradas)
         super().delete(registro_id)
         delete_folder(ADJUNTOS_DIR / str(registro_id))
 

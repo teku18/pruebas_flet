@@ -14,14 +14,22 @@ Son las MISMAS tareas de la Agenda (tabla "tareas"):
 Llevar una tarea a una etapa "hecha" la marca como hecha (con historial,
 como en la Agenda) y ofrece dejar el avance en la bitácora.
 
+Adjuntos: la misma caja que Desarrollo y la bitácora (core/adjuntos_ui.py),
+con "Adjuntar archivo" y "De mis capturas". Archivos en data/tareas/<id>/.
+
 Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
 from datetime import date
 
 import flet as ft
+from sqlalchemy.orm import selectinload
 
+from core.adjuntos import Adjunto
+from core.adjuntos_ui import AttachmentsBox
+from core.database import SessionLocal
 from core.ui import DateField, confirm, delete_button, notify, short_date, swipe_to_delete
 from modulos.agenda.models import Tarea
+from modulos.agenda.models.tarea import MODELO_ADJUNTOS, TAREAS_ADJUNTOS_DIR
 from modulos.proyectos import routes
 from modulos.proyectos import services as ps
 from modulos.proyectos.models import EtapaTarea, Proyecto
@@ -36,6 +44,7 @@ class ProjectTasks:
         self.proyecto: Proyecto | None = None
         self.vista_modo = "lista"  # "lista" | "kanban"
         self.registro: Tarea | None = None
+        self.n_adjuntos: dict[int, int] = {}  # {tarea_id: cuántos} para el 📎 de la lista
         self._build_form()
 
     # ==================================================================
@@ -43,6 +52,7 @@ class ProjectTasks:
     # ==================================================================
     def body(self, pro: Proyecto) -> ft.Control:  # propio
         self.proyecto = pro
+        self.n_adjuntos = Adjunto.count_by_record(MODELO_ADJUNTOS)
         columnas = ps.tasks_by_stage(pro)
         if not any(tareas for _, tareas in columnas):
             return ft.Container(
@@ -100,6 +110,8 @@ class ProjectTasks:
             partes.append(t.horario)
         if t.recurrente:
             partes.append(f"↻ {t.frecuencia_label}")
+        if self.n_adjuntos.get(t.id):
+            partes.append(f"📎 {self.n_adjuntos[t.id]}")
         return " · ".join(partes)
 
     def _check(self, t: Tarea) -> ft.IconButton:  # propio
@@ -207,6 +219,8 @@ class ProjectTasks:
     # Formulario
     # ==================================================================
     def _build_form(self):  # propio
+        self.adjuntos = AttachmentsBox(self.page, MODELO_ADJUNTOS,
+                                       lambda tarea_id: TAREAS_ADJUNTOS_DIR / str(tarea_id))
         # expand dentro de un Row = todo el ancho
         self.txt_titulo = ft.TextField(label="Tarea", max_length=150, autofocus=True,
                                        expand=True)
@@ -234,6 +248,7 @@ class ProjectTasks:
                         self.campo_fecha.fila,
                         self.lbl_agenda,
                         ft.Row([self.txt_notas]),
+                        self.adjuntos.control,
                         ft.Row([
                             self.btn_guardar,
                             ft.TextButton("Cancelar", icon=ft.Icons.CLOSE,
@@ -272,12 +287,20 @@ class ProjectTasks:
         self.campo_fecha.set_value(date.today())
         self.lbl_agenda.value = ""
         self.lbl_agenda.visible = False
+        self.adjuntos.clear()
         self._toggle_date()
         self.page.navigate(routes.TAREA)
 
+    @staticmethod
+    def _get(tarea_id: int) -> Tarea | None:  # propio
+        """La tarea con sus adjuntos ya cargados (la sesión se cierra al salir)."""
+        with SessionLocal() as session:
+            return session.get(Tarea, tarea_id, options=[selectinload(Tarea.adjuntos)])
+
     def open(self, t: Tarea):  # propio
-        self.registro = Tarea.get(t.id)
+        self.registro = self._get(t.id)
         t = self.registro
+        self.adjuntos.load(t.adjuntos)
         self.lbl_titulo.value = "Tarea"
         self.btn_eliminar.visible = True
         self.txt_titulo.value = t.titulo
@@ -316,6 +339,7 @@ class ProjectTasks:
                                  etapa_id=abierta.id if abierta else etapa_id)
             else:
                 t = Tarea.update(self.registro.id, titulo=titulo, notas=notas, fecha=fecha)
+            self.adjuntos.apply(t.id)
             resultado = None
             if etapa_id and etapa_id != t.etapa_id:
                 resultado = ps.move_task(t.id, etapa_id)  # marca hecha / reabre si toca

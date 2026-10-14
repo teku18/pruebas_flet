@@ -54,3 +54,4 @@ respaldos/
 
 # Registro del último build del APK
 build_apk.log
+build*.log                # logs de las apps de prueba (pruebas/…)

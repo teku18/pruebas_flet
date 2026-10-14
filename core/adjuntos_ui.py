@@ -1,5 +1,6 @@
 """
-Caja de adjuntos del formulario de un pendiente:
+Caja de adjuntos para CUALQUIER formulario (pendientes de Desarrollo,
+entradas de la bitácora, tareas de proyecto, y lo que venga):
 
   Adjuntos
   ┌──────────────────────────────────────┐
@@ -8,8 +9,16 @@ Caja de adjuntos del formulario de un pendiente:
   └──────────────────────────────────────┘
   [📎 Adjuntar archivo]  [📷 De mis capturas]
 
-Mismo esquema que la bitácora de Proyectos: mientras editas, lo que agregas o
-quitas queda "pendiente" y se aplica con apply() al dar Guardar.
+Uso:
+    caja = AttachmentsBox(page, "agenda.tarea", lambda tid: DATA_DIR / "tareas" / str(tid))
+    formulario.controls.append(caja.control)
+    caja.load(tarea.adjuntos)        # al abrir uno existente  (o caja.clear())
+    caja.set_editable(False)         # modo "ver": sin ✕ ni botones
+    caja.apply(tarea.id)             # al dar Guardar (después de crear/actualizar)
+
+Mientras editas, lo que agregas o quitas queda "pendiente" y se aplica con
+apply() al dar Guardar (Cancelar lo descarta: vuelve a llamar load()).
+Las filas van a la tabla única "adjuntos" (core/adjuntos.py).
 Cada elemento es un dict:
   {"id": int|None, "nombre", "tamano", "ruta": str|None (guardado),
    "origen": str|None (archivo elegido), "datos": bytes|None (web),
@@ -21,10 +30,10 @@ from pathlib import Path
 
 import flet as ft
 
+from core.adjuntos import Adjunto
+from core.capturas import Captura, delete_capture, list_captures
 from core.storage import absolute_path, human_size, save_file
 from core.ui import notify, service
-from modulos.desarrollo.capturas import Captura, delete_capture, list_captures
-from modulos.desarrollo.models import DEV_ADJUNTOS_DIR, DevAdjunto
 
 EXT_IMAGEN = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 MAX_VISTA_PREVIA = 15 * 1024 * 1024  # no cargar en pantalla archivos gigantes
@@ -76,20 +85,21 @@ def show_preview(page: ft.Page, titulo: str, contenido: bytes):  # propio
 
 
 class AttachmentsBox:
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, modelo: str, carpeta, titulo: str = "Adjuntos"):
+        """
+        modelo:  dueño de los adjuntos, p. ej. "dev.pendiente"
+        carpeta: función registro_id -> Path donde se copian sus archivos
+        """
         self.page = page
+        self.modelo = modelo
+        self.carpeta = carpeta
+        self.editable = True
         self.items: list[dict] = []
-        self.borrar: list[int] = []  # ids de DevAdjunto a borrar al guardar
+        self.borrar: list[int] = []  # ids de Adjunto a borrar al guardar
 
         self.col = ft.Column(spacing=6)
         self.lbl_vacio = ft.Text("Sin adjuntos", size=12, italic=True, color=ft.Colors.OUTLINE)
-        self.control = ft.Column(
-            spacing=6,
-            controls=[
-                ft.Text("Adjuntos", weight=ft.FontWeight.BOLD),
-                self.lbl_vacio,
-                self.col,
-                ft.Row(
+        self.fila_botones = ft.Row(
                     wrap=True,
                     controls=[
                         ft.OutlinedButton("Adjuntar archivo", icon=ft.Icons.ATTACH_FILE,
@@ -97,9 +107,22 @@ class AttachmentsBox:
                         ft.OutlinedButton("De mis capturas", icon=ft.Icons.PHOTO_CAMERA,
                                           on_click=self.pick_captures),
                     ],
-                ),
+                )
+        self.control = ft.Column(
+            spacing=6,
+            controls=[
+                ft.Text(titulo, weight=ft.FontWeight.BOLD),
+                self.lbl_vacio,
+                self.col,
+                self.fila_botones,
             ],
         )
+
+    def set_editable(self, editable: bool):  # propio
+        """False = modo "ver": se pueden abrir, pero no agregar ni quitar."""
+        self.editable = editable
+        self.fila_botones.visible = editable
+        self.render()
 
     # ==================================================================
     # Cargar / limpiar
@@ -108,7 +131,7 @@ class AttachmentsBox:
         self.items, self.borrar = [], []
         self.render()
 
-    def load(self, adjuntos: list[DevAdjunto]):  # propio
+    def load(self, adjuntos: list[Adjunto]):  # propio
         self.items = [
             {"id": a.id, "nombre": a.nombre, "tamano": a.tamano, "ruta": a.ruta,
              "origen": None, "datos": None, "captura": None}
@@ -164,8 +187,9 @@ class AttachmentsBox:
                             ft.Text(detalle, size=11, color=ft.Colors.OUTLINE),
                         ],
                     ),
-                    ft.IconButton(ft.Icons.CLOSE, tooltip="Quitar",
-                                  on_click=lambda e, i=indice: self.remove(i)),
+                    *([ft.IconButton(ft.Icons.CLOSE, tooltip="Quitar",
+                                     on_click=lambda e, i=indice: self.remove(i))]
+                      if self.editable else []),
                 ],
             ),
         )
@@ -262,12 +286,13 @@ class AttachmentsBox:
     # ==================================================================
     # Guardar (lo llama el formulario después de crear/actualizar)
     # ==================================================================
-    def apply(self, pendiente_id: int):  # propio
+    def apply(self, registro_id: int):  # propio
+        """Guarda lo pendiente: borra lo quitado y copia lo nuevo a la carpeta del dueño."""
         for adjunto_id in self.borrar:
-            DevAdjunto.delete(adjunto_id)
+            Adjunto.delete(adjunto_id)
         self.borrar = []
 
-        carpeta = DEV_ADJUNTOS_DIR / str(pendiente_id)
+        carpeta = self.carpeta(registro_id)
         for adj in self.items:
             if adj["id"] is not None:
                 continue
@@ -277,8 +302,10 @@ class AttachmentsBox:
                 carpeta,
                 adj["nombre"],
             )
-            nuevo = DevAdjunto.create(pendiente_id=pendiente_id, nombre=adj["nombre"],
-                                      ruta=ruta.as_posix(), tamano=adj["tamano"])
+            nuevo = Adjunto.create(modelo=self.modelo, registro_id=registro_id,
+                                   nombre=adj["nombre"], ruta=ruta.as_posix(),
+                                   tamano=adj["tamano"],
+                                   mimetype=Adjunto.guess_mimetype(adj["nombre"]))
             adj["id"], adj["ruta"] = nuevo.id, nuevo.ruta
             if adj.get("captura"):
-                delete_capture(adj["captura"])  # ya está en el pendiente: sale de la bandeja
+                delete_capture(adj["captura"])  # ya tiene dueño: sale de la bandeja

@@ -34,6 +34,7 @@ exclude = [
   "respaldos",
   "docs",
   "scripts",
+  "pruebas",                 # apps de prueba aparte (p. ej. avisos)
   ".flet",
   ".venv",
   ".idea",

@@ -9,6 +9,10 @@ La "fecha" de una tarea es su PRÓXIMA fecha:
                 salta al siguiente periodo (la renta del 1 oct pasa al 1 nov).
 Así el chismoso solo pregunta "¿qué tareas tienen fecha <= mañana?".
 
+Adjuntos: tabla única "adjuntos" (core/adjuntos.py) con modelo "agenda.tarea";
+los archivos van a data/tareas/<tarea_id>/. Hoy se adjuntan desde el
+formulario de la tarea dentro del proyecto.
+
 Tareas de un proyecto (se crean desde el proyecto, pestaña Tareas):
   - etapa_id: su columna en el Kanban (catálogo EtapaTarea de Proyectos)
   - fecha puede ir VACÍA: una tarea sin fecha vive solo en el proyecto y NO
@@ -28,8 +32,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
+from core.adjuntos import Adjunto, attachments_relation
 from core.database import Base
 from core.mixins import CrudMixin
+from core.storage import DATA_DIR, delete_folder
+
+MODELO_ADJUNTOS = "agenda.tarea"
+TAREAS_ADJUNTOS_DIR = DATA_DIR / "tareas"
 
 FRECUENCIA_SELECTION = {
     "unica": "Una vez",
@@ -67,6 +76,8 @@ class Tarea(CrudMixin, Base):
     cumplimientos: Mapped[list["Cumplimiento"]] = relationship(
         back_populates="tarea", cascade="all, delete-orphan"
     )
+    # Solo lectura: se agregan/quitan con Adjunto.create / Adjunto.delete
+    adjuntos: Mapped[list[Adjunto]] = attachments_relation("Tarea", MODELO_ADJUNTOS)
 
     @validates("frecuencia")
     def _validate_frecuencia(self, key, value):  # propio
@@ -85,6 +96,13 @@ class Tarea(CrudMixin, Base):
             raise ValueError("Pon la hora de inicio antes que la de fin")
         if self.hora_inicio and self.hora_fin and self.hora_fin < self.hora_inicio:
             raise ValueError("La hora fin no puede ser antes del inicio")
+
+    @classmethod
+    def delete(cls, registro_id: int) -> None:  # propio
+        """La fila (y su historial, en cascada), sus adjuntos y su carpeta."""
+        Adjunto.delete_for(MODELO_ADJUNTOS, registro_id)
+        super().delete(registro_id)
+        delete_folder(TAREAS_ADJUNTOS_DIR / str(registro_id))
 
     @property
     def recurrente(self) -> bool:  # propio

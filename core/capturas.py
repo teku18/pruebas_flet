@@ -1,6 +1,9 @@
 """
 Bandeja de capturas: lo que tomas con la herramienta flotante (📷 / 🎥) antes
-de adjuntarlo a un pendiente.
+de adjuntarlo a un pendiente, una tarea o una entrada de bitácora.
+
+Vive en core/ (antes estaba en Desarrollo) porque ya la usan varios módulos:
+cualquier caja de adjuntos (core/adjuntos_ui.py) tiene "De mis capturas".
 
   data/capturas/captura_agenda_2026-09-29_203512.png     <- captura (tomada en Agenda)
   data/capturas/grabacion_finanzas_2026-09-29_2036.gif   <- grabación (GIF animado)
@@ -8,8 +11,8 @@ de adjuntarlo a un pendiente.
 El nombre guarda en qué módulo se tomó: al reportarla, el pendiente nuevo ya
 trae ese módulo elegido.
 
-Al adjuntar una captura a un pendiente se COPIA a la carpeta del pendiente y
-se quita de la bandeja (así la bandeja solo tiene lo que falta reportar).
+Al adjuntar una captura se COPIA a la carpeta de su dueño y se quita de la
+bandeja (así la bandeja solo tiene lo que falta usar).
 
 La grabación son varias capturas seguidas (page.take_screenshot) armadas como
 GIF animado con Pillow: funciona igual en la compu y en el celular, pero solo

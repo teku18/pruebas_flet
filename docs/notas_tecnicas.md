@@ -44,6 +44,9 @@ código** (para que lo abras y lo veas funcionando).
 | 31 | [De Selection a catálogo: etapas](#31-de-selection-a-catálogo-etapas-como-los-stage_id-de-odoo) | `modulos/proyectos/models/catalogos.py`, migración 0011 |
 | 32 | [Kanban con Flet: Draggable + DragTarget](#32-kanban-con-flet-draggable--dragtarget) | `modulos/proyectos/views/comun.py`, `tareas.py` |
 | 33 | [Probar en el navegador con Playwright](#33-cómo-se-probó-sin-celular-flet-en-el-navegador--playwright) | (pruebas, fuera del repo) |
+| 34 | [Una sola tabla de adjuntos](#34-una-sola-tabla-de-adjuntos-como-irattachment-de-odoo) | `core/adjuntos.py`, migración 0012 |
+| 35 | [Probar que el respaldo está completo](#35-probar-que-el-respaldo-está-completo-sin-listas-fijas) | `scripts/verificar_respaldo.py` |
+| 36 | [Avisos con la app cerrada](#36-avisos-con-la-app-cerrada-quién-despierta-a-quién) | `pruebas/notificaciones/` |
 
 ---
 
@@ -688,6 +691,97 @@ ft.run(main, view=ft.AppView.WEB_BROWSER, port=8551, no_cdn=True)
   "Incorrect locale information provided".
 - Siempre sobre una **copia** de la BD, nunca la tuya.
 
+## 34. Una sola tabla de adjuntos (como ir.attachment de Odoo)
+
+**Qué es.** En vez de una tabla de adjuntos por módulo (`dev_adjuntos`,
+`proyecto_adjuntos`, …), una sola tabla `adjuntos` donde cada fila dice de
+quién es con dos columnas:
+
+```
+ adjuntos.modelo      = "agenda.tarea"     ← como res_model en Odoo
+ adjuntos.registro_id = 12                 ← como res_id
+```
+
+Esto se llama **relación polimórfica**: `registro_id` puede apuntar a filas de
+distintas tablas según `modelo`.
+
+**Lo que se gana:** un solo modelo, un solo componente de pantalla
+(`AttachmentsBox`) y cualquier módulo nuevo (Memorias, Kraken Tools) adjunta
+sin crear tablas.
+
+**Lo que se paga:** la BD ya no puede tener una llave foránea real (¿a qué
+tabla apuntaría?). Por eso:
+- Al borrar un registro, su dueño llama `Adjunto.delete_for(modelo, id)`:
+  el "ondelete=cascade" se hace en código (igual que Odoo con `ir.attachment`).
+- Para seguir escribiendo `pendiente.adjuntos` se usa una relación de solo
+  lectura con un JOIN armado a mano:
+
+```python
+adjuntos = relationship(
+    Adjunto,
+    primaryjoin="and_(Adjunto.modelo == 'dev.pendiente', "
+                "foreign(Adjunto.registro_id) == Pendiente.id)",
+    viewonly=True,
+)
+```
+
+`foreign(...)` le dice a SQLAlchemy cuál lado "apunta" (como si hubiera FK) y
+`viewonly=True` que no intente guardar por ahí. Esto vive en
+`attachments_relation()` para no repetirlo.
+
+**La migración (0012)** crea la tabla, copia las filas viejas (la `ruta` se
+copia tal cual: los archivos no se mueven) y borra las tablas viejas. El
+downgrade las regresa.
+
+**Dónde.** `core/adjuntos.py` (modelo), `core/adjuntos_ui.py` (pantalla),
+`alembic/versions/0012_adjuntos_unicos.py`.
+
+## 35. Probar que el respaldo está completo (sin listas fijas)
+
+**El problema.** Cada módulo nuevo agrega tablas; si el respaldo dependiera de
+una lista, tarde o temprano alguien olvida agregar una.
+
+**La idea.** `scripts/verificar_respaldo.py` no conoce ninguna tabla por
+nombre: las lee de `Base.metadata.sorted_tables` (todas las que declaran los
+modelos, ordenadas para que los padres vayan antes que los hijos), mete un
+registro de prueba en cada una según el tipo de cada columna, respalda,
+"formatea" (borra BD y data/), restaura y compara.
+
+Corre en una carpeta temporal gracias a `CK_DATA_ROOT`, así que nunca toca tu
+BD. Úsalo cada vez que agregues un módulo:
+
+```bash
+python scripts/verificar_respaldo.py
+```
+
+**Dónde.** `scripts/verificar_respaldo.py`, `core/database.py` (`CK_DATA_ROOT`).
+
+## 36. Avisos con la app cerrada: quién despierta a quién
+
+**Qué es.** Python solo corre mientras la app está abierta. Para que llegue un
+aviso con la app cerrada, alguien más tiene que "despertar": el sistema
+operativo.
+
+```
+ app abierta ──► programa la alarma en Android (AlarmManager)
+                          │
+ app cerrada              ▼  a la hora indicada
+                 Android muestra la notificación  (Python ni se entera)
+```
+
+- **Exacta vs inexacta**: Android agrupa las alarmas inexactas para ahorrar
+  batería (pueden llegar unos minutos tarde); las exactas necesitan el
+  permiso `SCHEDULE_EXACT_ALARM`.
+- **Lo que las borra**: "Forzar detención" de la app y algunos modos de ahorro
+  de batería (Xiaomi, Huawei…). Reiniciar no, si la app registra el
+  "boot receiver" (lo agrega el parche de la extensión).
+- **Extensión de Flet**: Flet deja usar paquetes de Flutter desde Python
+  (aquí `flutter_local_notifications` vía `flet-android-notifications`). Al
+  compilar, `flet build` registra la parte de Flutter que trae el paquete
+  ("Registered Flutter user extensions").
+
+**Dónde.** `pruebas/notificaciones/` (app de prueba aparte).
+
 ---
 
 ## Registro de cambios de estas notas
@@ -699,3 +793,4 @@ ft.run(main, view=ft.AppView.WEB_BROWSER, port=8551, no_cdn=True)
 | 2026-09-30 | 0.14.1 | 27–28 (arranque frágil / preferencias, rclone) |
 | 2026-10-01 | 1.0.0 | 29 (APK: datos, firma y versiones) |
 | 2026-10-02 | 1.1.0 | 30–33 (candado de la BD, catálogos/etapas, Kanban, pruebas en navegador) |
+| 2026-10-14 | 1.2.0 | 34–36 (adjuntos únicos, verificar respaldo, avisos con la app cerrada) |
