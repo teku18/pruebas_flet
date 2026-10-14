@@ -292,10 +292,12 @@ class TimeField:
         campo.valor            -> time o None
         campo.set_value(t)     -> cambia la hora (None la borra)
         campo.set_enabled(False) -> modo lectura
+        campo.on_change = fn   -> fn() cada vez que el usuario pone o quita la hora
     """
 
     def __init__(self, page: ft.Page, etiqueta: str):
         self.page = page
+        self.on_change = None
         self.valor: time | None = None
         self.activo = True
         self.txt = ft.TextField(
@@ -328,9 +330,13 @@ class TimeField:
 
     def clear(self, e=None):  # propio
         self.set_value(None)
+        if self.on_change:
+            self.on_change()
         self.page.update()
 
     def _on_change(self, e):  # propio
         if e.control.value:
             self.set_value(e.control.value.replace(second=0, microsecond=0))
+            if self.on_change:
+                self.on_change()
             self.page.update()

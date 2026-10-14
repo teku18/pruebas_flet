@@ -18,3 +18,7 @@ flet-charts==1.0.0
 
 # Grabaciones de pantalla de Desarrollo (arma el GIF animado)
 Pillow==12.2.0
+
+# Avisos en el celular. En la compu no se usa en la app, pero trae el comando
+# flet-android-notifications-patch que scripts/build_apk.sh necesita.
+flet-android-notifications==0.12.0

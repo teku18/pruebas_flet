@@ -67,6 +67,12 @@ class Tarea(CrudMixin, Base):
     creado_en: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, default=datetime.now
     )
+    # Aviso en el celular: minutos ANTES de la hora (0 = a la hora; sin hora,
+    # la base es 8:00 am). None = sin aviso. Ver modulos/agenda/avisos.py.
+    # Sin "default" a propósito: SQLAlchemy usa el default también cuando le
+    # pasas None, y entonces "Sin aviso" se guardaría como "a la hora".
+    # Los formularios siempre mandan el valor (las nuevas proponen 0).
+    aviso_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Columna del Kanban del proyecto (None = la primera que le toque)
     etapa_id: Mapped[int | None] = mapped_column(ForeignKey("tarea_etapas.id"), nullable=True)
 

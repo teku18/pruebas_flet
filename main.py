@@ -15,6 +15,7 @@ lo que no lo tiene (page.update, page.navigate, ft.*) viene de Flet.
 """
 import flet as ft
 
+from core import avisos
 from core.database import init_db
 from core.home import APP_NAME, HomeView
 from core.themes import DEFAULT_COLOR, apply_color
@@ -35,6 +36,10 @@ def main(page: ft.Page):  # propio
     page.window.height = 915
     page.window.resizable = False
     page.window.maximizable = False
+
+    # Avisos en el celular (en la compu no hace nada). Antes de los módulos:
+    # la Agenda lo usa al arrancar y cada vez que cambia una tarea.
+    avisos.install(page)
 
     # ------------------------------------------------------------------
     # Módulos + pantalla de inicio

@@ -29,6 +29,7 @@ from core.adjuntos_ui import AttachmentsBox
 from core.database import SessionLocal
 from core.ui import DateField, confirm, delete_button, notify, short_date, swipe_to_delete
 from modulos.agenda.models import Tarea
+from modulos.agenda import avisos
 from modulos.agenda.models.tarea import MODELO_ADJUNTOS, TAREAS_ADJUNTOS_DIR
 from modulos.proyectos import routes
 from modulos.proyectos import services as ps
@@ -230,6 +231,11 @@ class ProjectTasks:
         self.sw_fecha = ft.Switch(label="Con fecha (también sale en la Agenda)",
                                   on_change=self._toggle_date)
         self.campo_fecha = DateField(self.page, "Fecha")
+        # Aviso en el celular (solo si tiene fecha). La hora se edita en la Agenda:
+        # aquí las opciones dependen de si la tarea ya tiene hora.
+        self.dd_aviso = ft.Dropdown(label="Avisarme", expand=True,
+                                    leading_icon=ft.Icons.NOTIFICATIONS_ACTIVE)
+        self.fila_aviso = ft.Row([self.dd_aviso])
         self.lbl_agenda = ft.Text(size=12, color=ft.Colors.OUTLINE)
 
         self.lbl_titulo = ft.Text("Nueva tarea")
@@ -246,6 +252,7 @@ class ProjectTasks:
                         self.fila_etapa,
                         self.sw_fecha,
                         self.campo_fecha.fila,
+                        self.fila_aviso,
                         self.lbl_agenda,
                         ft.Row([self.txt_notas]),
                         self.adjuntos.control,
@@ -268,8 +275,14 @@ class ProjectTasks:
         )
         self.fila_etapa.controls = [self.dd_etapa]
 
+    def _fill_aviso(self, aviso_min: int | None, con_hora: bool):  # propio
+        self.dd_aviso.options = [ft.DropdownOption(key=k, text=v)
+                                 for k, v in avisos.options_for(con_hora).items()]
+        self.dd_aviso.value = avisos.to_key(aviso_min, con_hora)
+
     def _toggle_date(self, e=None):  # propio
         self.campo_fecha.fila.visible = bool(self.sw_fecha.value)
+        self.fila_aviso.visible = bool(self.sw_fecha.value)
         if e is not None:
             self.page.update()
 
@@ -285,6 +298,7 @@ class ProjectTasks:
         self.sw_fecha.value = False
         self.sw_fecha.disabled = False
         self.campo_fecha.set_value(date.today())
+        self._fill_aviso(0, con_hora=False)
         self.lbl_agenda.value = ""
         self.lbl_agenda.visible = False
         self.adjuntos.clear()
@@ -310,6 +324,7 @@ class ProjectTasks:
         self._new_stage_dropdown(etapa.id if etapa else None)
         self.sw_fecha.value = t.fecha is not None
         self.campo_fecha.set_value(t.fecha or date.today())
+        self._fill_aviso(t.aviso_min, con_hora=t.hora_inicio is not None)
         # Lo que solo se edita en la Agenda
         extras = [x for x in (t.horario, t.frecuencia_label if t.recurrente else "") if x]
         self.lbl_agenda.value = (" · ".join(extras) + " — horario y frecuencia se editan "
@@ -331,14 +346,16 @@ class ProjectTasks:
         fecha = self.campo_fecha.valor if self.sw_fecha.value else None
         notas = (self.txt_notas.value or "").strip() or None
         etapa_id = int(self.dd_etapa.value) if self.dd_etapa.value else None
+        aviso_min = avisos.from_key(self.dd_aviso.value)
         try:
             if self.registro is None:
                 abierta = ps.first_open_stage(self.proyecto)
                 t = Tarea.create(titulo=titulo, notas=notas, proyecto_id=self.proyecto.id,
-                                 fecha=fecha, frecuencia="unica",
+                                 fecha=fecha, frecuencia="unica", aviso_min=aviso_min,
                                  etapa_id=abierta.id if abierta else etapa_id)
             else:
-                t = Tarea.update(self.registro.id, titulo=titulo, notas=notas, fecha=fecha)
+                t = Tarea.update(self.registro.id, titulo=titulo, notas=notas, fecha=fecha,
+                                 aviso_min=aviso_min)
             self.adjuntos.apply(t.id)
             resultado = None
             if etapa_id and etapa_id != t.etapa_id:

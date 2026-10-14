@@ -47,6 +47,7 @@ código** (para que lo abras y lo veas funcionando).
 | 34 | [Una sola tabla de adjuntos](#34-una-sola-tabla-de-adjuntos-como-irattachment-de-odoo) | `core/adjuntos.py`, migración 0012 |
 | 35 | [Probar que el respaldo está completo](#35-probar-que-el-respaldo-está-completo-sin-listas-fijas) | `scripts/verificar_respaldo.py` |
 | 36 | [Avisos con la app cerrada](#36-avisos-con-la-app-cerrada-quién-despierta-a-quién) | `pruebas/notificaciones/` |
+| 37 | [Avisos de la Agenda: proveedores y eventos](#37-avisos-de-la-agenda-proveedores-eventos-y-reprograma-todo) | `core/avisos.py`, `modulos/agenda/avisos.py` |
 
 ---
 
@@ -780,7 +781,55 @@ operativo.
   compilar, `flet build` registra la parte de Flutter que trae el paquete
   ("Registered Flutter user extensions").
 
+**Resultado de la prueba (14 oct 2026)**: Redmi Note 14 Pro+ 5G, HyperOS 3.0 /
+Android 16. Llegaron los avisos exacto e inexacto con la app cerrada y también
+después de reiniciar (salen hasta el primer desbloqueo: antes Android no deja
+correr las apps).
+
 **Dónde.** `pruebas/notificaciones/` (app de prueba aparte).
+
+## 37. Avisos de la Agenda: proveedores, eventos y "reprograma todo"
+
+**Cómo está armado (1.2.1):**
+
+```
+ core/avisos.py              ← habla con Android (permiso, programar, probar)
+   upcoming() = junta lo que dicen los PROVEEDORES (próximos 14 días)
+        ▲
+ modulos/agenda/avisos.py    ← proveedor: tareas pendientes → [Aviso(cuando, título, texto)]
+```
+
+Un módulo nuevo (Notas, Kraken Tools) solo registra su función con
+`register_provider(...)`: no toca `core/avisos.py`.
+
+**"Reprograma todo" en vez de llevar la cuenta.** Cada vez se hace
+`cancel_all()` y se vuelve a programar lo de las próximas 2 semanas. Así nunca
+queda un aviso de una tarea que cambiaste o borraste, y no hay que guardar qué
+id de alarma corresponde a qué tarea.
+
+**¿Quién avisa que algo cambió? Eventos de SQLAlchemy.** En vez de que cada
+pantalla se acuerde de reprogramar:
+
+```python
+event.listen(Tarea, "after_update", _changed)   # también after_insert / after_delete
+```
+
+Es como heredar `write()` en Odoo para avisarle a otro módulo. Para no
+reprogramar 3 veces si guardas 3 cosas seguidas, `request_sync()` espera 1.5 s
+y solo la última petición hace el trabajo (*debounce*).
+
+**Trampa que salió en las pruebas:** con `mapped_column(..., default=0)`,
+SQLAlchemy usa el default **también cuando le pasas `None`**: "Sin aviso" se
+guardaba como "a la hora". Solución: sin `default` en la columna y que los
+formularios siempre manden el valor.
+
+**El parche en cada build.** `flet build` genera el proyecto Android en
+`build/flutter`; la extensión necesita parcharlo (receptores en el manifest y
+*desugaring* en Gradle). `scripts/build_apk.sh` lo aplica y, si Flet regeneró
+el proyecto, compila otra vez.
+
+**Dónde.** `core/avisos.py`, `modulos/agenda/avisos.py`,
+`modulos/configuracion/avisos.py`, migración 0013, `scripts/build_apk.sh`.
 
 ---
 
@@ -794,3 +843,4 @@ operativo.
 | 2026-10-01 | 1.0.0 | 29 (APK: datos, firma y versiones) |
 | 2026-10-02 | 1.1.0 | 30–33 (candado de la BD, catálogos/etapas, Kanban, pruebas en navegador) |
 | 2026-10-14 | 1.2.0 | 34–36 (adjuntos únicos, verificar respaldo, avisos con la app cerrada) |
+| 2026-10-14 | 1.2.1 | 36 (resultado de la prueba) y 37 (avisos de la Agenda) |

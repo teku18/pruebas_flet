@@ -6,6 +6,8 @@ modos "nuevo" | "ver" | "editar".
   Fecha:      la próxima vez que toca
   Horario:    opcional; sin hora = todo el día
   Frecuencia: Una vez, Diario, Lunes a viernes, Cada semana, Cada mes
+  Aviso:      en el celular, a la hora o con anticipación (sin hora: 8:00 am).
+              Las opciones cambian al poner o quitar la hora (avisos.py).
 
 En modo "ver" aparece [✓ Marcar hecha] y, si es recurrente, su historial.
 
@@ -25,7 +27,7 @@ from core.ui import (
     notify,
     short_date,
 )
-from modulos.agenda import services
+from modulos.agenda import avisos, services
 from modulos.agenda.models import FRECUENCIA_SELECTION, Cumplimiento, Tarea
 from modulos.agenda.routes import BASE, TAREA
 from modulos.agenda.views.chismoso import complete_task
@@ -51,6 +53,10 @@ class TaskFormView:
         self.campo_fecha = DateField(self.page, "Fecha")
         self.campo_inicio = TimeField(self.page, "Hora de inicio")
         self.campo_fin = TimeField(self.page, "Hora de fin")
+        # Al poner/quitar la hora cambian las opciones del aviso
+        self.campo_inicio.on_change = self._refresh_aviso
+        self.dd_aviso = ft.Dropdown(label="Avisarme", expand=True,
+                                    leading_icon=ft.Icons.NOTIFICATIONS_ACTIVE)
         self.dd_frecuencia = ft.Dropdown(
             label="Se repite",
             options=dropdown_options(FRECUENCIA_SELECTION),
@@ -88,6 +94,7 @@ class TaskFormView:
                             self.campo_fecha.fila,
                             self.campo_inicio.fila,
                             self.campo_fin.fila,
+                            ft.Row([self.dd_aviso]),
                             ft.Row([self.dd_frecuencia]),
                             self.txt_notas,
                             self.fila_botones,
@@ -115,6 +122,18 @@ class TaskFormView:
             ft.DropdownOption(key=str(p.id), text=p.nombre) for p in proyectos
         ]
 
+    def _refresh_aviso(self, aviso_min="actual"):  # propio
+        """
+        Opciones del aviso según haya hora o no ("A la hora" vs "Ese día a las 8:00").
+        Sin argumento conserva lo elegido (si existe en la nueva lista).
+        """
+        con_hora = self.campo_inicio.valor is not None
+        if aviso_min == "actual":
+            aviso_min = avisos.from_key(self.dd_aviso.value) if self.dd_aviso.value else 0
+        self.dd_aviso.options = [ft.DropdownOption(key=k, text=v)
+                                 for k, v in avisos.options_for(con_hora).items()]
+        self.dd_aviso.value = avisos.to_key(aviso_min, con_hora)
+
     # ==================================================================
     # Modos
     # ==================================================================
@@ -124,6 +143,7 @@ class TaskFormView:
         self.txt_notas.read_only = lectura
         self.dd_proyecto.disabled = lectura
         self.dd_frecuencia.disabled = lectura
+        self.dd_aviso.disabled = lectura
         self.campo_fecha.set_enabled(not lectura)
         self.campo_inicio.set_enabled(not lectura)
         self.campo_fin.set_enabled(not lectura)
@@ -152,6 +172,7 @@ class TaskFormView:
         self.campo_inicio.set_value(t.hora_inicio)
         self.campo_fin.set_value(t.hora_fin)
         self.dd_frecuencia.value = t.frecuencia
+        self._refresh_aviso(t.aviso_min)
         self.txt_notas.value = t.notas or ""
         self._fill_history(t)
 
@@ -194,6 +215,7 @@ class TaskFormView:
         self.campo_inicio.set_value(None)
         self.campo_fin.set_value(None)
         self.dd_frecuencia.value = "unica"
+        self._refresh_aviso(0)  # nueva: avisa a la hora (8:00 si no tiene hora)
         self.txt_notas.value = ""
         self.col_historial.controls = []
         self.modo = "nuevo"
@@ -256,6 +278,7 @@ class TaskFormView:
             hora_inicio=inicio,
             hora_fin=fin,
             frecuencia=frecuencia,
+            aviso_min=avisos.from_key(self.dd_aviso.value),
             notas=(self.txt_notas.value or "").strip() or None,
         )
         try:

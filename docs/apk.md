@@ -28,7 +28,7 @@ keytool -genkey -v -keystore ~/.claves/controlkraken-upload.jks \
 ```bash
 cd ~/workspace_personal/pruebas_flet
 source .venv/bin/activate
-pip install -r requirements.txt     # flet[all] trae el comando `flet build`
+pip install -r requirements.txt     # flet[all] trae `flet build`; y el parche de avisos
 ./scripts/build_apk.sh              # o: bash scripts/build_apk.sh
 ```
 
@@ -39,6 +39,9 @@ pip install -r requirements.txt     # flet[all] trae el comando `flet build`
   Número interno (`--build-number`) = número de commits: siempre sube, que es
   lo que Android exige para aceptar una actualización. **Haz commit antes de
   generar cada APK nuevo.**
+- **Avisos (desde 1.2.1):** el script aplica solo el parche de
+  `flet-android-notifications`. La primera vez verás un error de
+  "desugaring" y luego "aplicándolo y compilando otra vez…": es normal.
 - Resultado: `build/apk/ControlKraken.apk` (o parecido; el script lo lista).
 
 ## 2. Instalarlo en el celular

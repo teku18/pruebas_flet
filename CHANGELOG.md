@@ -1,5 +1,26 @@
 # Cambios de ControlKraken
 
+## 1.2.1 — 2026-10-14
+
+### Nuevo
+- **Avisos de la Agenda con la app cerrada** (celular). Cada tarea elige en su
+  formulario "Avisarme": a la hora, 5/15/30 min, 1 hora o 1 día antes, o sin
+  aviso. Sin hora: a las 8:00 am de ese día (o un día antes). Las recurrentes
+  avisan cada vez que tocan; lo ya hecho no avisa.
+- Se programan los próximos 14 días al abrir la app y cada vez que creas,
+  editas, marcas o borras una tarea (también desde Proyectos).
+- **Configuración → Avisos**: estado del permiso, próximo aviso, "Probar
+  aviso", "Permitir hora exacta" y consejo para Xiaomi/Redmi.
+
+### Cambios
+- Migración 0013: `tareas.aviso_min` (las tareas que ya tenías avisan a la hora).
+- `core/avisos.py`: motor de avisos con "proveedores" (otros módulos podrán
+  agregar recordatorios sin tocarlo).
+- `scripts/build_apk.sh` aplica el parche de `flet-android-notifications` y
+  revisa que el APK traiga los receptores de alarmas.
+- Probado en Redmi Note 14 Pro+ 5G (HyperOS 3.0 / Android 16): llegan con la
+  app cerrada y después de reiniciar.
+
 ## 1.2.0 — 2026-10-14
 
 ### Nuevo

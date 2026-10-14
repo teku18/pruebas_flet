@@ -1,4 +1,4 @@
-"""Módulo Configuración: modo claro/oscuro, color de la app y respaldo."""
+"""Módulo Configuración: modo claro/oscuro, color de la app, avisos y respaldo."""
 import flet as ft
 
 from core.module import AppModule
@@ -16,6 +16,8 @@ class ConfiguracionModule(AppModule):
         self.ajustes = SettingsView(page, self.route)
 
     def build_views(self, route: str) -> list[ft.View]:  # propio
+        # Cada vez que entras: estado de los avisos al día
+        self.page.run_task(self.ajustes.avisos.refresh)
         return [self.ajustes.vista]
 
     async def on_start(self) -> None:  # propio

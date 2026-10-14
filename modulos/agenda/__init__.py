@@ -9,6 +9,7 @@ Capas:
   models/     Tarea, Cumplimiento           (la despensa)
   services.py gossip, complete, next_date, occurrences   (el cocinero)
   views/      AgendaView, CalendarPanel, TaskFormView    (el mesero)
+  avisos.py   qué tareas avisan en el celular y cuándo (core/avisos.py programa)
 """
 import flet as ft
 
@@ -24,6 +25,7 @@ class AgendaModule(AppModule):
 
     def __init__(self, page: ft.Page):
         super().__init__(page)
+        import modulos.agenda.avisos  # noqa: F401  (registra el proveedor de avisos)
         from modulos.agenda.views import AgendaView, TaskFormView
 
         # Agenda --tocar tarea--> Formulario.show
@@ -40,6 +42,15 @@ class AgendaModule(AppModule):
         elif route == routes.TAREA:
             vistas.append(self.formulario.vista)
         return vistas
+
+    async def on_start(self) -> None:  # propio
+        """Al abrir la app: permiso de notificaciones (solo pregunta 1 vez) y avisos al día."""
+        from core import avisos
+
+        actual = avisos.current()
+        if actual is not None:
+            await actual.ask_permission()
+            await actual.sync()
 
     def go_back(self, route: str) -> None:  # propio
         if route == routes.TAREA:

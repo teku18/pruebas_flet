@@ -2,6 +2,7 @@
 Pantalla de Configuración (/ajustes):
   - Modo: claro / oscuro / sistema
   - Color de la app: 12 colores (core/themes.py)
+  - Avisos: permisos y próximo aviso de la Agenda (avisos.py)
   - Respaldo: carpeta, automático, respaldar ahora, restaurar (respaldo.py)
 Las preferencias se guardan en el dispositivo y se aplican al abrir la app.
 """
@@ -17,6 +18,7 @@ from core.themes import (
     apply_mode,
 )
 from core.ui import pref_get, pref_set
+from modulos.configuracion.avisos import NotificationsSection
 from modulos.configuracion.respaldo import BackupSection
 
 CLAVE_MODO = "tema"    # se conserva la clave anterior para no perder tu elección
@@ -52,6 +54,7 @@ class SettingsView:
         self.rejilla_colores = ft.Row(wrap=True, spacing=4, run_spacing=12)
         self._build_color_grid()
         self.respaldo = BackupSection(page, self.prefs)
+        self.avisos = NotificationsSection(page)
 
         self.vista = ft.View(
             route=route,
@@ -72,6 +75,8 @@ class SettingsView:
                                 color=ft.Colors.OUTLINE,
                             ),
                             self.rejilla_colores,
+                            ft.Divider(),
+                            *self.avisos.controles,
                             ft.Divider(),
                             *self.respaldo.controles,
                             ft.Divider(),
