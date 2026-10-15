@@ -70,6 +70,7 @@ def import_models():  # propio
     import modulos.proyectos.models  # noqa: F401
     import modulos.agenda.models  # noqa: F401
     import modulos.desarrollo.models  # noqa: F401
+    import modulos.notas.models  # noqa: F401
 
 
 def alembic_config() -> Config:  # propio

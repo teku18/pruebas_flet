@@ -7,6 +7,7 @@ Estructura del proyecto:
   modulos/memorias/     -> (próximamente) pensamientos por voz
   modulos/proyectos/    -> proyectos y su bitácora de avances
   modulos/agenda/       -> tareas (con o sin proyecto) y el chismoso del día
+  modulos/notas/        -> notas rápidas y listas con casillas
   modulos/desarrollo/   -> roadmap de la app: módulos, prioridad y pendientes
   modulos/configuracion -> modo claro/oscuro y color de la app
 

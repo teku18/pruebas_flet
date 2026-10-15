@@ -10,6 +10,7 @@ from modulos.configuracion import ConfiguracionModule
 from modulos.desarrollo import DesarrolloModule
 from modulos.finanzas import FinanzasModule
 from modulos.memorias import MemoriasModule
+from modulos.notas import NotasModule
 from modulos.proyectos import ProyectosModule
 
 MODULES = [
@@ -17,6 +18,7 @@ MODULES = [
     ProyectosModule,
     MemoriasModule,
     AgendaModule,
+    NotasModule,
     DesarrolloModule,
     ConfiguracionModule,
 ]

@@ -1,5 +1,28 @@
 # Cambios de ControlKraken
 
+## 1.3.0 — 2026-10-14
+
+### Nuevo
+- **Módulo Notas**: notas de texto libre y listas con casillas (súper, ideas,
+  pendientes sueltos).
+  - **Captura rápida**: escribe en "Nota rápida" y Enter: queda guardada sin
+    abrir nada. ☑ abre una lista nueva con el cursor en la primera casilla;
+    Enter crea la siguiente.
+  - **Se guarda solo** (sin botón Guardar); una nota vacía se descarta al salir.
+  - **Fijar, archivar, color y etiqueta** (dejar presionada una tarjeta o el
+    menú ⋮ del editor). Vienen las etiquetas Súper, Ideas y Pendientes; se crean
+    más desde el mismo selector.
+  - **Buscar** en títulos, textos y casillas; chips por etiqueta y Archivadas.
+  - En el tablero las casillas se palomean sin abrir la lista; las hechas bajan
+    a "Hechos".
+  - Convertir una nota de texto en lista y al revés.
+  - **Exportar a Excel**: hoja con todas las notas + una hoja por lista.
+- Desarrollo: el módulo "Notas" aparece en tu roadmap para reportarle pendientes.
+
+### Cambios
+- Migración 0014: tablas `notas`, `nota_items`, `nota_etiquetas` (entran solas
+  al respaldo: `verificar_respaldo.py` pasa con las 18 tablas).
+
 ## 1.2.1 — 2026-10-14
 
 ### Nuevo

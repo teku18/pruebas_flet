@@ -48,6 +48,7 @@ código** (para que lo abras y lo veas funcionando).
 | 35 | [Probar que el respaldo está completo](#35-probar-que-el-respaldo-está-completo-sin-listas-fijas) | `scripts/verificar_respaldo.py` |
 | 36 | [Avisos con la app cerrada](#36-avisos-con-la-app-cerrada-quién-despierta-a-quién) | `pruebas/notificaciones/` |
 | 37 | [Avisos de la Agenda: proveedores y eventos](#37-avisos-de-la-agenda-proveedores-eventos-y-reprograma-todo) | `core/avisos.py`, `modulos/agenda/avisos.py` |
+| 38 | [Notas: guardado automático, EXISTS y 2 columnas](#38-notas-guardado-automático-búsqueda-con-exists-y-tarjetas-en-2-columnas) | `modulos/notas/` |
 
 ---
 
@@ -831,6 +832,47 @@ el proyecto, compila otra vez.
 **Dónde.** `core/avisos.py`, `modulos/agenda/avisos.py`,
 `modulos/configuracion/avisos.py`, migración 0013, `scripts/build_apk.sh`.
 
+
+## 38. Notas: guardado automático, búsqueda con EXISTS y tarjetas en 2 columnas
+
+**Guardado automático sin botón.** El editor pide guardar en cada cambio, pero
+espera 0.8 s sin teclear (mismo *debounce* que los avisos, nota 37): con un
+contador de "turno", solo la última petición guarda. Al salir se guarda al
+instante y, si la nota quedó vacía, se borra.
+
+**No redibujar mientras escribes.** Cada casilla es un `TextField`; al teclear
+solo se actualiza un dict en memoria. La pantalla se reconstruye únicamente al
+agregar, quitar o palomear. Si se reconstruyera en cada tecla, el cursor
+saltaría al inicio.
+
+**Guardar la "foto completa".** El editor manda título, cuerpo y TODAS las
+casillas; el servicio reemplaza las casillas de la nota. Es más simple que
+llevar la cuenta de cuál se agregó/movió/borró, y una lista del súper es chica.
+
+**Buscar dentro de las casillas: EXISTS.** "¿Hay alguna casilla de esta nota
+que contenga el texto?":
+
+```python
+en_items = exists().where(NotaItem.nota_id == Nota.id,
+                          func.lower(NotaItem.texto).like("%leche%"))
+Nota.search(or_(func.lower(Nota.titulo).like(...), en_items))
+```
+
+Es el equivalente a un dominio de Odoo sobre un One2many:
+`[("items.texto", "ilike", "leche")]`. Ojo: `lower()` de SQLite solo cambia
+letras sin acento (SÚPER ≠ súper); buscar en minúsculas siempre funciona.
+
+**Tarjetas en 2 columnas: `ResponsiveRow`.** La fila se divide en 12; cada
+tarjeta pide `col={"xs": 6, "md": 4}`: 2 por fila en el celular, 3 en pantallas
+anchas. Como `GridView` obliga a que todas midan lo mismo, aquí cada tarjeta
+mide lo que necesita.
+
+**Dejar presionado.** `Container(on_long_press=...)` abre un `BottomSheet` con
+las acciones (como en Keep).
+
+**Dónde.** `modulos/notas/` (models, services, views/tablero.py,
+views/editor.py, exportador.py), migración 0014.
+
 ---
 
 ## Registro de cambios de estas notas
@@ -844,3 +886,4 @@ el proyecto, compila otra vez.
 | 2026-10-02 | 1.1.0 | 30–33 (candado de la BD, catálogos/etapas, Kanban, pruebas en navegador) |
 | 2026-10-14 | 1.2.0 | 34–36 (adjuntos únicos, verificar respaldo, avisos con la app cerrada) |
 | 2026-10-14 | 1.2.1 | 36 (resultado de la prueba) y 37 (avisos de la Agenda) |
+| 2026-10-14 | 1.3.0 | 38 (Notas: guardado automático, búsqueda, tarjetas) |
