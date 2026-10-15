@@ -19,8 +19,7 @@ def network_settings_dialog(page: ft.Page):  # propio
     a = Ajustes.current()
     resumen = ft.Text(size=12, color=ft.Colors.OUTLINE)
     txt_dns = ft.TextField(label="Servidor DNS", value=a.dns_servidor, expand=True,
-                           text_style=ft.TextStyle(font_family=MONO),
-                           helper="La herramienta DNS le pregunta a este servidor")
+                           text_style=ft.TextStyle(font_family=MONO))
 
     def refresh_stats():  # propio
         n = historial.count()
@@ -67,6 +66,8 @@ def network_settings_dialog(page: ft.Page):  # propio
         content=ft.Container(width=460, content=ft.Column(
             tight=True, spacing=12, controls=[
                 ft.Row([txt_dns]),
+                ft.Text("La herramienta DNS le pregunta a este servidor (no cambia el "
+                        "internet de tu celular).", size=12, color=ft.Colors.OUTLINE),
                 ft.Row(wrap=True, spacing=6, run_spacing=6, controls=[
                     ft.Chip(label=ft.Text(f"{nombre} {ip}", size=12),
                             on_click=lambda e, x=ip: suggest(x))

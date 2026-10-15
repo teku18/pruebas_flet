@@ -28,8 +28,8 @@ HERRAMIENTAS = [
                 ft.Colors.BLUE, routes.SQLITE),
     Herramienta("Red", "Ping, puertos, DNS, IP, certificados, whois", ft.Icons.LAN,
                 ft.Colors.TEAL, routes.RED),
-    Herramienta("SSH", "Monitorear tus servidores", ft.Icons.TERMINAL, ft.Colors.PURPLE,
-                listo=False),
+    Herramienta("SSH", "Recursos de tus servidores y comandos", ft.Icons.TERMINAL,
+                ft.Colors.PURPLE, routes.SSH),
     Herramienta("Webhooks", "Recibir y ver peticiones", ft.Icons.WEBHOOK, ft.Colors.PINK,
                 listo=False),
 ]

@@ -17,6 +17,10 @@ Trabaja en una carpeta temporal (CK_DATA_ROOT): NUNCA toca tu BD real.
            servidor DNS falso, certificado contra un servidor HTTPS con un
            certificado autofirmado/vencido (hecho con openssl), Whois (RDAP y
            puerto 43 falsos), Mi IP, Wake-on-LAN (se recibe el paquete), dispositivos
+  SSH      un servidor SSH falso (paramiko) que corre los comandos de verdad en
+           esta máquina, con un `sudo` falso: conexión, huella del servidor,
+           métricas (CPU, RAM, discos, red, procesos, servicios), comandos con
+           sudo, logs y errores (contraseña mala, puerto cerrado).
            en la red (en 127.0.0.0/29) e historial.
 """
 import asyncio
@@ -608,6 +612,179 @@ def test_red(base: str):  # propio
     check(h.detalle["metodo"] == "tcp" and h.exito, "el detalle completo se guarda")
 
 
+# ============================================================================
+# SSH: servidor falso
+# ============================================================================
+SUDO_FALSO = """#!/bin/bash
+# sudo de prueba: -S lee la contraseña de la entrada; si es "secreto", ejecuta
+while [ "${1:0:1}" = "-" ]; do [ "$1" = "-p" ] && shift; shift; done
+read -r clave
+if [ "$clave" != "secreto" ]; then echo "Sorry, try again." >&2
+  echo "sudo: 1 incorrect password attempt" >&2; exit 1; fi
+exec "$@"
+"""
+
+
+def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
+    """Servidor SSH falso: acepta usuario/clave y corre cada comando con bash."""
+    import socket
+    import subprocess
+
+    import paramiko
+
+    bin_dir = Path(tempfile.mkdtemp())
+    (bin_dir / "sudo").write_text(SUDO_FALSO)
+    (bin_dir / "sudo").chmod(0o755)
+    llave = paramiko.RSAKey.generate(2048)  # cada servidor falso: su propia llave
+
+    class Srv(paramiko.ServerInterface):
+        def __init__(self):  # propio
+            self.listo, self.cmd = threading.Event(), None
+
+        def check_auth_password(self, u, p):  # noqa: D102
+            return paramiko.AUTH_SUCCESSFUL if (u, p) == (usuario, clave) else paramiko.AUTH_FAILED
+
+        def get_allowed_auths(self, u):  # noqa: D102
+            return "password"
+
+        def check_channel_request(self, kind, cid):  # noqa: D102
+            return paramiko.OPEN_SUCCEEDED
+
+        def check_channel_exec_request(self, ch, cmd):  # noqa: D102
+            self.cmd = cmd.decode()
+            self.listo.set()
+            return True
+
+    def channel(t: "paramiko.Transport"):  # propio
+        while t.is_active():
+            ch = t.accept(5)
+            if ch is None:
+                continue
+            srv = t.server_object
+            srv.listo.wait(5)
+            srv.listo.clear()
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+            proc = subprocess.Popen(["bash", "-c", srv.cmd], stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+            ch.settimeout(0.3)
+            entrada = b""
+            try:
+                while True:
+                    trozo = ch.recv(4096)
+                    if not trozo:
+                        break
+                    entrada += trozo
+            except socket.timeout:
+                pass
+            out, err = proc.communicate(entrada)
+            ch.sendall(out)
+            ch.sendall_stderr(err)
+            ch.send_exit_status(proc.returncode)
+            ch.close()
+
+    def attend(c):  # propio
+        t = paramiko.Transport(c)
+        t.add_server_key(llave)
+        t.start_server(server=Srv())
+        channel(t)
+
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", 0))
+    s.listen()
+
+    def accept():  # propio
+        while True:
+            c, _ = s.accept()
+            threading.Thread(target=attend, args=(c,), daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    return s.getsockname()[1]
+
+
+def test_ssh():  # propio
+    import time as tiempo
+
+    from modulos.kraken.models import ComandoSsh, Equipo
+    from modulos.kraken.ssh import acciones, metricas
+    from modulos.kraken.ssh.conexion import HuellaCambio, Sesion, friendly
+
+    print("SSH")
+    puerto = start_ssh()
+    e = Equipo.create(nombre="Servidor cliente", host="127.0.0.1", ssh_usuario="edgar",
+                      ssh_puerto=puerto, ssh_clave="secreto", ssh_servicios="cron ssh")
+    with Sesion(e) as ses:
+        check(ses.abierta and ses.huella.startswith("ssh-rsa SHA256:"),
+              f"conecta y lee la huella ({ses.ms_conexion} ms)")
+        check(Equipo.get(e.id).ssh_huella == ses.huella, "la huella se guarda la primera vez")
+        texto = ses.run(metricas.script(e.servicios)).texto
+        m1 = metricas.parse(texto, tiempo.monotonic())
+        tiempo.sleep(1)
+        m2 = metricas.parse(ses.run(metricas.script(e.servicios)).texto, tiempo.monotonic(), m1)
+    check(m1.ram_total > 0 and m1.discos and m1.nucleos >= 1 and m1.encendido_s > 0
+          and m1.cpu is None, f"métricas: {m1.sistema} · {m1.nucleos} núcleos · "
+          f"RAM {metricas.kb_text(m1.ram_total)} · {len(m1.discos)} disco(s)")
+    check(m2.cpu is not None and 0 <= m2.cpu <= 100 and m2.rx_s is not None,
+          f"segunda lectura: {m2.summary()}")
+    check(m1.procesos and set(m1.servicios) == {"cron", "ssh"}, "procesos y servicios")
+    check(metricas.uptime_text(266580) == "3 días, 2 h" and metricas.kb_text(32276480) == "30.8 GB",
+          "textos de tiempo encendido y tamaño")
+    raro = "@@os\nX\n@@fin\n"
+    check(metricas.parse(raro, 0).ram_total == 0, "un servidor raro no truena el panel")
+    try:
+        metricas.parse("Welcome to router", 0)
+        check(False, "salida sin datos aceptada")
+    except ValueError:
+        check(True, "salida que no es Linux: lo dice")
+
+    with Sesion(Equipo.get(e.id)) as ses:
+        r = acciones.run_command(ses, "Prueba sudo", "sudo echo hola-root")
+        check(r.codigo == 0 and r.salida.strip() == "hola-root", "comando con sudo (contraseña por -S)")
+        r = acciones.run_command(ses, "Falla", "ls /no/existe")
+        # el mensaje depende del idioma del servidor ("No such file" / "No existe el archivo")
+        check(r.codigo != 0 and "/no/existe" in r.errores and not r.summary()[1],
+              f"comando que falla: {r.summary()[0]}")
+        log = Path(tempfile.mkdtemp()) / "odoo.log"
+        log.write_text("".join(f"2026-10-15 linea {k} {'ERROR boom' if k % 10 == 0 else 'INFO ok'}\n"
+                               for k in range(1, 501)))
+        s_ = acciones.read_log(ses, str(log), 50)
+        check(len(s_.texto.splitlines()) == 50 and "linea 500" in s_.texto, "log: últimas 50 líneas")
+        s_ = acciones.read_log(ses, str(log), 20, buscar="error")
+        check(len(s_.texto.splitlines()) == 20 and all("ERROR" in x for x in s_.texto.splitlines()),
+              "log: buscar sin distinguir mayúsculas")
+        s_ = acciones.read_log(ses, str(log), 5, con_sudo=True)
+        check(s_.ok and "linea 500" in s_.texto, "log con sudo")
+        check(acciones.log_command("/var/log/a b.log", 10, "x'y") ==
+              "grep -i -F -- 'x'\"'\"'y' '/var/log/a b.log' | tail -n 10", "rutas y búsquedas con comillas")
+
+    Equipo.update(e.id, ssh_clave="mala")
+    malo = Equipo.get(e.id)
+    try:
+        Sesion(malo).open()
+        check(False, "contraseña mala aceptada")
+    except Exception as ex:  # noqa: BLE001
+        check("Usuario o contraseña incorrectos" in friendly(ex, malo), friendly(ex, malo))
+    Equipo.update(e.id, ssh_clave="secreto", ssh_puerto=start_ssh())  # otro servidor: otra llave
+    try:
+        Sesion(Equipo.get(e.id)).open()
+        check(False, "huella cambiada aceptada")
+    except HuellaCambio as ex:
+        ses = Sesion(Equipo.get(e.id))
+        ses.open(aceptar_huella=ex.nueva)
+        ses.close()
+        check(Equipo.get(e.id).ssh_huella == ex.nueva,
+              "si la huella cambia NO se conecta; al aceptar, se guarda la nueva")
+    import socket
+    libre = socket.socket(); libre.bind(("127.0.0.1", 0)); cerrado = libre.getsockname()[1]; libre.close()
+    Equipo.update(e.id, ssh_puerto=cerrado)
+    try:
+        Sesion(Equipo.get(e.id)).open()
+    except Exception as ex:  # noqa: BLE001
+        check("Nadie atiende SSH" in friendly(ex, Equipo.get(e.id)), "puerto cerrado: explicado")
+    check([c.nombre for c in ComandoSsh.for_server(e.id)][0] == "Reiniciar Odoo",
+          "vienen los comandos iniciales")
+
+
 def main() -> int:  # propio
     database.init_db()
     print(f"Carpeta de prueba: {TMP}")
@@ -616,6 +793,7 @@ def main() -> int:  # propio
     conexion_id = test_sqlite()
     test_backup(conexion_id)
     test_red(base)
+    test_ssh()
     print()
     if FALLAS:
         print(f"✗ {len(FALLAS)} prueba(s) fallaron")

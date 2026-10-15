@@ -28,3 +28,11 @@ httpx==0.28.1
 
 # Kraken Tools · Red: consultas DNS (A, MX, TXT, NS…) al servidor que elijas
 dnspython==2.8.0
+
+# Kraken Tools · SSH: monitor de servidores (paramiko). Sus piezas en C se fijan
+# a versiones que Flet tiene compiladas para Android (ver pyproject.toml)
+paramiko==5.0.0
+cryptography==48.0.0
+bcrypt==5.0.0
+pynacl==1.6.2
+cffi==2.0.0

@@ -56,6 +56,8 @@ código** (para que lo abras y lo veas funcionando).
 | 43 | [Red: sockets, ping sin ser root y puertos en paralelo](#43-red-sockets-ping-sin-ser-root-y-puertos-en-paralelo) | `modulos/kraken/red/ping.py`, `puertos.py`, `dispositivos.py` |
 | 44 | [DNS, certificados, Whois y Wake-on-LAN por dentro](#44-dns-certificados-whois-y-wake-on-lan-por-dentro) | `modulos/kraken/red/` |
 | 45 | [Probar red sin internet: servidores falsos](#45-probar-red-sin-internet-servidores-falsos) | `scripts/verificar_kraken.py` |
+| 46 | [SSH con paramiko: huella del servidor y sudo sin teclado](#46-ssh-con-paramiko-huella-del-servidor-y-sudo-sin-teclado) | `modulos/kraken/ssh/conexion.py` |
+| 47 | [Panel en vivo: /proc, diferencias y "solo mientras lo ves"](#47-panel-en-vivo-proc-diferencias-y-solo-mientras-lo-ves) | `modulos/kraken/ssh/metricas.py`, `views/panel.py` |
 
 ---
 
@@ -1162,6 +1164,83 @@ el paquete de Wake-on-LAN. Los servicios aceptan la dirección como parámetro
 y la app usa los reales.
 
 
+## 46. SSH con paramiko: huella del servidor y sudo sin teclado
+
+**SSH** es la forma estándar de entrar a un servidor Linux por la red, cifrado
+(puerto 22). **paramiko** es SSH escrito en Python. Es puro Python, pero usa
+`cryptography`, `bcrypt` y `PyNaCl`, que tienen partes en C: en el APK solo
+funcionan si Flet las tiene compiladas para Android. Por eso primero se probó
+con una app aparte (`pruebas/ssh/`) y se fijaron esas versiones en `pyproject.toml`.
+
+**Correr un comando:**
+
+```python
+cliente = paramiko.SSHClient()
+cliente.connect(host, port=22, username="edgar", password="…", timeout=10)
+entrada, salida, error = cliente.exec_command("uptime")
+texto = salida.read().decode(); codigo = salida.channel.recv_exit_status()
+```
+
+**Huella del servidor (TOFU, "confía la primera vez").** Cada servidor tiene una
+llave; su huella (`SHA256:zTVm…`) es como su cédula. La primera conexión la
+guarda en el equipo (`ssh_huella`); las siguientes la comparan. Si cambia, NO
+se conecta y pregunta: puede ser que reinstalaron el servidor… o que alguien se
+hace pasar por él (ataque de intermediario). Es lo mismo que hace `ssh` con
+`~/.ssh/known_hosts` y su aviso "REMOTE HOST IDENTIFICATION HAS CHANGED".
+
+**sudo sin teclado.** Un comando con `sudo` se queda esperando la contraseña.
+Con `sudo -S -p ''` sudo la lee de la entrada estándar (sin mostrar el
+"[sudo] password:"), y la app se la escribe por el canal:
+
+```python
+entrada, salida, error = cliente.exec_command("sudo -S -p '' systemctl restart odoo")
+entrada.write(clave + "\n"); entrada.flush()
+```
+
+**paramiko es bloqueante**: todo se llama con `asyncio.to_thread` (nota 19) para
+no congelar la pantalla.
+
+**Dónde.** `modulos/kraken/ssh/conexion.py` (`Sesion`, `HuellaCambio`),
+`acciones.py`, `views/comandos.py`; migración 0018.
+
+
+## 47. Panel en vivo: /proc, diferencias y "solo mientras lo ves"
+
+**Un solo comando para todo.** En vez de 8 idas y vueltas, un script que
+imprime secciones marcadas (`@@cpu`, `@@mem`, `@@df`…) y Python las separa.
+Lleva `export LC_ALL=C` para que el servidor conteste en inglés y con formato
+fijo: tu PC en español decía "Inter" y "S.ficheros" en vez de "Swap" y
+"Filesystem".
+
+**/proc: el sistema contado como archivos.** `/proc/meminfo` (memoria),
+`/proc/loadavg` (carga), `/proc/uptime` (tiempo encendido), `/proc/net/dev`
+(bytes de red), `/proc/stat` (tiempo de CPU).
+
+**CPU % = diferencia entre dos lecturas.** `/proc/stat` cuenta cuánto tiempo
+lleva el CPU trabajando y descansando DESDE QUE PRENDIÓ. Un número suelto no
+dice nada; dos lecturas separadas 5 s sí:
+
+```
+% CPU = (ocupado_ahora − ocupado_antes) / (total_ahora − total_antes) × 100
+```
+
+Igual con la red: (bytes ahora − bytes antes) / segundos = velocidad. Por eso
+la primera lectura muestra "Midiendo…".
+
+**RAM "usada" de verdad.** Se usa `MemAvailable` (lo que de verdad se puede
+pedir), no `MemFree`: Linux usa la RAM libre como caché y la suelta cuando
+hace falta, así que "free" casi siempre parece lleno.
+
+**Solo mientras lo ves.** El ciclo (`while self.activo: leer; esperar 5 s`) se
+detiene al salir de la pantalla y cierra la conexión. Si la app se va a segundo
+plano, `page.on_app_lifecycle_state_change` avisa (`PAUSE`/`HIDE`) y el ciclo
+se pausa; al volver (`RESUME`/`SHOW`) se despierta con un `asyncio.Event` y lee
+al instante.
+
+**Dónde.** `modulos/kraken/ssh/metricas.py` (`SCRIPT`, `parse`),
+`views/panel.py` (`_loop`, `_on_lifecycle`).
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1177,3 +1256,4 @@ y la app usa los reales.
 | 2026-10-14 | 1.4.0 | 39 (Memorias: fotos, un día como hoy, voz; verificar_flet) |
 | 2026-10-14 | 1.5.0 | 40–42 (cliente HTTP async, cURL con shlex, SQLite solo lectura y archivos fuera del respaldo) |
 | 2026-10-14 | 1.6.0 | 43–45 (sockets, ping sin root, puertos en paralelo, dispositivos; DNS, certificados, Whois, WoL; servidores falsos) |
+| 2026-10-15 | 1.7.0 | 46–47 (SSH con paramiko, huella del servidor, sudo -S; panel en vivo con /proc) |

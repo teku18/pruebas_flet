@@ -62,7 +62,7 @@ class NetworkHistoryView:
                 ft.Icon(ft.Icons.CHECK_CIRCLE if h.exito else ft.Icons.CANCEL, size=20,
                         color=ft.Colors.GREEN if h.exito else ft.Colors.RED),
                 ft.Column(spacing=0, expand=True, controls=[
-                    ft.Text(f"{p.nombre if p else h.herramienta} · {h.objetivo}",
+                    ft.Text(f"{p.nombre if p else h.herramienta.upper()} · {h.objetivo}",
                             weight=ft.FontWeight.W_500, max_lines=1,
                             overflow=ft.TextOverflow.ELLIPSIS),
                     ft.Text(h.resumen, size=12, color=ft.Colors.OUTLINE, max_lines=1,

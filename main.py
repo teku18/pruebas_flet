@@ -9,7 +9,7 @@ Estructura del proyecto:
   modulos/agenda/       -> tareas (con o sin proyecto) y el chismoso del día
   modulos/notas/        -> notas rápidas y listas con casillas
   modulos/desarrollo/   -> roadmap de la app: módulos, prioridad y pendientes
-  modulos/kraken/       -> Kraken Tools: cliente HTTP, explorador SQLite y red (más por venir)
+  modulos/kraken/       -> Kraken Tools: cliente HTTP, explorador SQLite, red y SSH
   modulos/configuracion -> modo claro/oscuro y color de la app
 
 Convención: los métodos y funciones marcados con  # propio  son nuestros;

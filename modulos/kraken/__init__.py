@@ -11,12 +11,16 @@ Navegación (encima de la pantalla de inicio):
   /kraken/red               -> Red: Mis equipos + pruebas
   /kraken/red/prueba        -> una prueba (ping, puertos, DNS…) y su resultado
   /kraken/red/historial     -> todas las pruebas de Red
+  /kraken/ssh               -> tus servidores SSH
+  /kraken/ssh/panel         -> un servidor en vivo (cada 5 s) + comandos
+  /kraken/ssh/logs          -> leer un log del servidor
 
 Capas (cada herramienta en su carpeta, para sumar Red, SSH y Webhooks):
   models/          tablas kt_* (todo en la BD y en el respaldo)
   http/            services.py (httpx, variables, historial, cURL) + views/
   sqlite/          services.py (sqlite3, solo lectura, CSV) + views/
   red/             un archivo por prueba (ping.py, puertos.py…) + views/
+  ssh/             conexion.py (paramiko), metricas.py, acciones.py + views/
   herramientas.py  las tarjetas del inicio
   comun.py         piezas de pantalla compartidas
 """
@@ -28,7 +32,7 @@ from modulos.kraken import routes
 
 class KrakenModule(AppModule):
     nombre = "Kraken Tools"
-    descripcion = "HTTP, SQLite, red y más"
+    descripcion = "HTTP, SQLite, red y SSH"
     icono = ft.Icons.HANDYMAN
     route = routes.BASE
 
@@ -37,6 +41,7 @@ class KrakenModule(AppModule):
         from modulos.kraken.http.views import EnvironmentsView, HttpHome, RequestEditor
         from modulos.kraken.red.views import NetworkHistoryView, NetworkHome, TestView
         from modulos.kraken.sqlite.views import DatabaseView, DatabasesView
+        from modulos.kraken.ssh.views import LogsView, PanelView, ServersView
         from modulos.kraken.views import KrakenHome
 
         self.inicio = KrakenHome(page)
@@ -52,8 +57,18 @@ class KrakenModule(AppModule):
         self.prueba = TestView(page)
         self.red = NetworkHome(page, on_test=self.prueba.open)
         self.red_historial = NetworkHistoryView(page, on_open=self._open_history)
+        # SSH: servidores --tocar--> panel (cada 5 s) --Logs--> logs
+        self.logs = LogsView(page)
+        self.panel = PanelView(page, on_logs=self.logs.open)
+        self.servidores = ServersView(page, on_open=self.panel.open)
 
     def _open_history(self, h):  # propio
+        if h.herramienta == "ssh":  # lo de SSH se ve en un diálogo (no es una prueba de Red)
+            from modulos.kraken.ssh.views.comandos import show_output
+            from modulos.kraken.ssh.views.panel import show_snapshot
+            (show_snapshot if (h.detalle or {}).get("tipo") == "panel" else show_output)(
+                self.page, h.detalle or {})
+            return
         self.prueba.open(h.herramienta, h.objetivo if h.objetivo != "Este equipo" else "",
                          detalle=h.detalle, cuando=h.creado_en, desde_historial=True)
 
@@ -82,6 +97,16 @@ class KrakenModule(AppModule):
                 vistas.append(self.prueba.vista)
             elif route == routes.RED:
                 self.red.load()
+        elif route.startswith(routes.SSH):
+            vistas.append(self.servidores.vista)
+            if route in (routes.SSH_PANEL, routes.SSH_LOGS) and self.panel.activo:
+                vistas.append(self.panel.vista)
+            if route == routes.SSH_LOGS and self.logs.activo:
+                vistas.append(self.logs.vista)
+            elif route != routes.SSH_PANEL or not self.panel.activo:
+                if route != routes.SSH:  # se recargó la app: no hay servidor abierto
+                    self.page.route = routes.SSH
+                self.servidores.load()
         elif route.startswith(routes.SQLITE):
             vistas.append(self.bases.vista)
             if route == routes.SQLITE_BASE and self.base.activa:
@@ -109,7 +134,13 @@ class KrakenModule(AppModule):
                                else routes.RED)
         elif route == routes.RED_HISTORIAL:
             self.page.navigate(routes.RED)
-        elif route in (routes.HTTP, routes.SQLITE, routes.RED):
+        elif route == routes.SSH_LOGS:
+            self.logs.close()
+            self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)
+        elif route == routes.SSH_PANEL:
+            self.panel.close()  # detiene el ciclo de 5 s y cierra la conexión
+            self.page.navigate(routes.SSH)
+        elif route in (routes.HTTP, routes.SQLITE, routes.RED, routes.SSH):
             self.page.navigate(routes.BASE)
         else:
             self.page.navigate("/")

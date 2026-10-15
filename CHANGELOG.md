@@ -1,5 +1,41 @@
 # Cambios de ControlKraken
 
+## 1.7.0 — 2026-10-15
+
+### Nuevo
+- **Kraken Tools · SSH** (la tarjeta "SSH" ya funciona): cuida tus servidores
+  desde el celular.
+  - **Servidores**: los mismos "Mis equipos" de Red con usuario, puerto y
+    contraseña SSH (guardada en texto normal y respaldada, como todo Kraken).
+  - **Panel en vivo, cada 5 s solo mientras lo ves** (se pausa si la app pasa a
+    segundo plano y se detiene al salir):
+    - sistema, tiempo encendido y carga
+    - **CPU y RAM** en porcentaje, con color (verde/naranja/rojo) y gráfica de
+      los últimos 5 minutos
+    - **discos** por partición (rojo al pasar del 90 %)
+    - red (bajada/subida), **servicios** (odoo, postgresql, nginx o los que
+      elijas) y los procesos que más consumen
+  - **Comandos guardados** con confirmación: vienen Reiniciar Odoo,
+    Reiniciar PostgreSQL, Reiniciar Nginx y "¿Qué ocupa el disco?". Se pueden
+    crear para todos los servidores o solo para uno. Los que empiezan con
+    `sudo` usan la contraseña guardada.
+  - **Logs**: últimas 100–1,000 líneas de cualquier archivo, con búsqueda,
+    ERROR en rojo y WARNING en naranja, y opción "con sudo".
+  - **Huella del servidor**: si un servidor cambia de llave, no se conecta y te
+    pregunta (protege contra alguien que se haga pasar por él).
+  - Cada comando y un "vistazo" por visita quedan en el historial de Red.
+- `pruebas/ssh/`: app aparte que confirmó que SSH funciona dentro del APK.
+
+### Cambios
+- Migración 0018: `kt_equipos` suma los datos SSH; tabla nueva
+  `kt_ssh_comandos`. Respaldo: 31 tablas.
+- Red: el texto de ayuda del servidor DNS ya no sale cortado.
+- Dependencias nuevas: `paramiko==5.0.0` con `cryptography==48.0.0`,
+  `bcrypt==5.0.0`, `pynacl==1.6.2` y `cffi==2.0.0` (versiones que Flet tiene
+  compiladas para Android).
+- `verificar_kraken.py` prueba SSH contra un servidor SSH falso (con un `sudo`
+  falso): más de 110 pruebas.
+
 ## 1.6.0 — 2026-10-14
 
 ### Nuevo
