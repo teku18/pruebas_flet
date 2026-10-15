@@ -47,12 +47,12 @@ class NoteEditor:
         self._enfocar: int | None = None  # índice de la casilla que recibe el cursor
 
         self.txt_titulo = ft.TextField(
-            hint_text="Título", border=ft.InputBorder.NONE, text_size=20,
+            hint_text="Título", border=ft.NoInputBorder(), text_size=20,
             text_style=ft.TextStyle(weight=ft.FontWeight.BOLD), max_length=150,
             counter=ft.Text(""), on_change=self._changed,
         )
         self.txt_cuerpo = ft.TextField(
-            hint_text="Nota", border=ft.InputBorder.NONE, multiline=True, min_lines=6,
+            hint_text="Nota", border=ft.NoInputBorder(), multiline=True, min_lines=6,
             on_change=self._changed,
         )
         self.col_items = ft.Column(spacing=0)
@@ -133,7 +133,7 @@ class NoteEditor:
 
     def _item_row(self, k: int, item: dict) -> ft.Control:  # propio
         txt = ft.TextField(
-            value=item["texto"], border=ft.InputBorder.NONE, dense=True, expand=True,
+            value=item["texto"], border=ft.NoInputBorder(), dense=True, expand=True,
             content_padding=ft.Padding.symmetric(vertical=10),
             autofocus=k == self._enfocar,
             color=ft.Colors.OUTLINE if item["hecho"] else None,

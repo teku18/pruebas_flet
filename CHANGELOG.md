@@ -1,5 +1,35 @@
 # Cambios de ControlKraken
 
+## 1.4.0 — 2026-10-14
+
+### Nuevo
+- **Memorias (rediseño)**: una bitácora de momentos importantes, no de pendientes.
+  - Cada memoria: **fecha del suceso** (puede ser de hace años), título,
+    relato, **varias fotos**, lugar, **etiquetas** (Viaje, Familia, Pareja,
+    Logro, Amigos, Trabajo; se crean más) y un **ánimo** con emoji.
+  - **Línea de tiempo** agrupada por año y mes, y **Galería** con todas las
+    fotos (tocar una abre su memoria).
+  - **"Un día como hoy"**: arriba de la línea de tiempo, lo que pasó en esta
+    misma fecha en años anteriores ("Hace 3 años").
+  - **Búsqueda** por texto (título, relato, lugar) y **filtros** por etiquetas
+    y rango de fechas.
+  - **Fotos copiadas a la app** (si la borras de la galería del celular, aquí
+    sigue): giradas según el EXIF, reducidas a 3072 px de lado mayor en JPEG
+    92 (no se nota la diferencia y pesan varias veces menos) y con miniatura
+    para que la galería cargue rápido. Toca una foto para verla completa y
+    pellizca para hacer zoom.
+  - Si la primera foto trae fecha, se propone como fecha de la memoria.
+  - Listo para el dictado por voz más adelante (campo `origen`; sin cambiar tablas).
+- `scripts/verificar_flet.py`: revisa que todo lo que el código usa de Flet
+  exista en la versión instalada (y avisa lo obsoleto).
+
+### Cambios
+- Migración 0015: `memorias`, `memoria_etiquetas`, `memoria_etiqueta_rel`; las
+  fotos van en la tabla única `adjuntos`. La descripción de Memorias en
+  Desarrollo ya no dice "Pensamientos por voz (próximamente)".
+- `verificar_respaldo.py` también revisa la carpeta `data/memorias/` (21 tablas ✓).
+- Notas: el editor usa `NoInputBorder()` (`InputBorder.NONE` se quita en Flet 1.3).
+
 ## 1.3.0 — 2026-10-14
 
 ### Nuevo

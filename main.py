@@ -4,7 +4,7 @@ ControlKraken — punto de entrada.
 Estructura del proyecto:
   core/                 -> lo compartido: BD, CrudMixin, UI común, temas, inicio
   modulos/finanzas/     -> Periodo, Movimiento y sus pantallas
-  modulos/memorias/     -> (próximamente) pensamientos por voz
+  modulos/memorias/     -> momentos importantes: línea de tiempo, galería, un día como hoy
   modulos/proyectos/    -> proyectos y su bitácora de avances
   modulos/agenda/       -> tareas (con o sin proyecto) y el chismoso del día
   modulos/notas/        -> notas rápidas y listas con casillas

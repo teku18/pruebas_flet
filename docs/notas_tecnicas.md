@@ -49,6 +49,7 @@ código** (para que lo abras y lo veas funcionando).
 | 36 | [Avisos con la app cerrada](#36-avisos-con-la-app-cerrada-quién-despierta-a-quién) | `pruebas/notificaciones/` |
 | 37 | [Avisos de la Agenda: proveedores y eventos](#37-avisos-de-la-agenda-proveedores-eventos-y-reprograma-todo) | `core/avisos.py`, `modulos/agenda/avisos.py` |
 | 38 | [Notas: guardado automático, EXISTS y 2 columnas](#38-notas-guardado-automático-búsqueda-con-exists-y-tarjetas-en-2-columnas) | `modulos/notas/` |
+| 39 | [Memorias: fotos con Pillow, un día como hoy, voz](#39-memorias-fotos-con-pillow-un-día-como-hoy-y-diseño-listo-para-la-voz) | `modulos/memorias/`, `scripts/verificar_flet.py` |
 
 ---
 
@@ -873,6 +874,58 @@ las acciones (como en Keep).
 **Dónde.** `modulos/notas/` (models, services, views/tablero.py,
 views/editor.py, exportador.py), migración 0014.
 
+
+## 39. Memorias: fotos con Pillow, "un día como hoy" y diseño listo para la voz
+
+**Las fotos se copian, no se referencian.** Guardar la ruta de la galería del
+celular sería frágil (si borras o mueves la foto, la memoria se queda sin
+ella). Se copia a `data/memorias/<id>/` y entra al respaldo.
+
+**Qué le hace Pillow a cada foto** (`modulos/memorias/imagenes.py`):
+
+```
+ foto del celular (4000×3000, 5 MB, "acostada" + etiqueta EXIF de giro)
+   │ ImageOps.exif_transpose()   ← la gira de verdad (si no, sale de lado)
+   │ thumbnail((3072, 3072))     ← solo si es más grande; conserva proporción
+   │ save(JPEG, quality=92)      ← a simple vista igual; pesa mucho menos
+   └ miniatura 480 px (JPEG 80)  ← para la galería y la línea de tiempo
+```
+
+La fecha se lee del EXIF (`DateTimeOriginal`, etiqueta 36867, dentro del
+sub-bloque 0x8769) para proponerla como fecha de la memoria.
+
+**"Un día como hoy" en SQL.** SQLite guarda las fechas como texto
+`AAAA-MM-DD`; se compara solo mes y día:
+
+```python
+func.strftime("%m-%d", Memoria.fecha) == hoy.strftime("%m-%d")
+```
+
+**Filtrar por un Many2many: `.any()`.** "Memorias que tengan ALGUNA de estas
+etiquetas":
+
+```python
+Memoria.etiquetas.any(EtiquetaMemoria.id.in_(ids))
+```
+
+(en Odoo: `[("etiqueta_ids", "in", ids)]`).
+
+**Miniaturas que llenan el cuadro.** Un `ft.Image(fit=COVER)` necesita ancho y
+alto fijos; en una cuadrícula el ancho lo decide `ResponsiveRow`. Por eso la
+foto va como imagen de **fondo** del `Container`
+(`image=ft.DecorationImage(src=…, fit=COVER)`) con `aspect_ratio=1`.
+
+**Listo para la voz sin tocar tablas.** `Memoria.origen` ("texto" | "voz"); el
+audio será un adjunto más (mimetype `audio/…`) y el relato, su transcripción.
+
+**Lección: `scripts/verificar_flet.py`.** `ft.ActionChip` no existe en Flet 1.0
+y pyflakes no lo ve (es un atributo, no un nombre): la pantalla tronaba al
+abrirse. El script revisa cada `ft.Algo` contra el Flet instalado. Córrelo
+antes de compilar y al actualizar Flet.
+
+**Dónde.** `modulos/memorias/` (models, services, imagenes.py, views/),
+migración 0015, `scripts/verificar_flet.py`.
+
 ---
 
 ## Registro de cambios de estas notas
@@ -887,3 +940,4 @@ views/editor.py, exportador.py), migración 0014.
 | 2026-10-14 | 1.2.0 | 34–36 (adjuntos únicos, verificar respaldo, avisos con la app cerrada) |
 | 2026-10-14 | 1.2.1 | 36 (resultado de la prueba) y 37 (avisos de la Agenda) |
 | 2026-10-14 | 1.3.0 | 38 (Notas: guardado automático, búsqueda, tarjetas) |
+| 2026-10-14 | 1.4.0 | 39 (Memorias: fotos, un día como hoy, voz; verificar_flet) |
