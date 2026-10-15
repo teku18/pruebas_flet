@@ -1,5 +1,39 @@
 # Cambios de ControlKraken
 
+## 1.6.0 — 2026-10-14
+
+### Nuevo
+- **Kraken Tools · Red** (la tarjeta "Red" ya funciona):
+  - **Mis equipos**: tus servidores, router o PC (IP o dominio, puertos que te
+    importan, MAC). Tocar uno: ping, revisar sus puertos, certificado, DNS o
+    encenderlo.
+  - **Ping**: responde o no, tiempos y mín/prom/máx. Usa ICMP si el sistema lo
+    deja; si no, "ping TCP" (lo dice en pantalla).
+  - **Puertos**: abiertos, cerrados o filtrados, con el nombre del servicio
+    (22 SSH, 5432 PostgreSQL, 8069 Odoo…). Botones Comunes, Web, Bases de
+    datos, Remoto y 1-1024. Se va pintando mientras corre y se puede cancelar.
+  - **DNS**: A, AAAA, CNAME, MX, TXT, NS (y PTR de una IP), preguntando al
+    servidor que elijas (**1.1.1.1 por defecto, configurable**).
+  - **Mi IP**: pública (con proveedor y ciudad), local y tu red.
+  - **Certificado HTTPS**: válido o por qué no, para qué dominios, quién lo
+    firmó y cuántos días le quedan.
+  - **Whois**: registrador, fechas y **cuándo vence** el dominio (RDAP o WHOIS).
+  - **Wake-on-LAN**: encender un equipo de tu red con su MAC.
+  - **Dispositivos en mi red**: qué hay conectado a tu Wi-Fi (IP, nombre,
+    puertos abiertos y qué parece ser); guardarlos en Mis equipos con un toque.
+    Solo redes privadas.
+  - **Historial de Red** con filtros por prueba; **cuántas se guardan es
+    configurable** en Ajustes de Red.
+- `scripts/verificar_kraken.py` prueba todo lo de Red contra servidores falsos
+  (DNS, WHOIS, RDAP, HTTPS vencido/autofirmado, UDP) sin internet: más de 90 pruebas.
+
+### Cambios
+- Migración 0017: tablas `kt_equipos` y `kt_historial_red`; `kt_ajustes`
+  suma `dns_servidor` (1.1.1.1) y `red_historial_max` (200). Respaldo: 30 tablas.
+- Cliente HTTP: al salir del editor, un envío en curso se cancela desde el
+  hilo correcto de asyncio.
+- Dependencia nueva: `dnspython==2.8.0` (pyproject y requirements).
+
 ## 1.5.0 — 2026-10-14
 
 ### Nuevo

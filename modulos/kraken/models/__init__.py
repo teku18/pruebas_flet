@@ -6,6 +6,7 @@ Modelos de Kraken Tools (todas las tablas empiezan con kt_).
   Entorno                              (variables {{base_url}}, {{token}}…)
   HistorialHttp                        (cada envío: lo mandado y lo recibido)
   ConexionSqlite 1 ──< N ConsultaSqlite (bases .db y sus consultas)
+  Equipo, HistorialRed                  (Red: tus equipos y las pruebas que corres)
 """
 from modulos.kraken.models.ajustes import Ajustes
 from modulos.kraken.models.http import (
@@ -17,8 +18,9 @@ from modulos.kraken.models.http import (
     HistorialHttp,
     Peticion,
 )
+from modulos.kraken.models.red import Equipo, HistorialRed, parse_ports
 from modulos.kraken.models.sqlite import BASES_DIR, ConexionSqlite, ConsultaSqlite
 
 __all__ = ["AUTH_SELECTION", "Ajustes", "BASES_DIR", "BODY_SELECTION", "Coleccion",
-           "ConexionSqlite", "ConsultaSqlite", "Entorno", "HistorialHttp", "METODOS",
-           "Peticion"]
+           "ConexionSqlite", "ConsultaSqlite", "Entorno", "Equipo", "HistorialHttp",
+           "HistorialRed", "METODOS", "Peticion", "parse_ports"]

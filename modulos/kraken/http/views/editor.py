@@ -169,8 +169,8 @@ class RequestEditor:
 
     def close(self):  # propio
         """Al salir: una petición guardada con cambios se guarda sola."""
-        if self._tarea is not None:
-            self._tarea.cancel()
+        if self._tarea is not None:  # se cancela en el hilo de asyncio (no desde aquí)
+            self.page.run_task(self.cancel)
         if self.peticion_id is not None and self.sucio:
             self._save_existing()
         self.activo = False

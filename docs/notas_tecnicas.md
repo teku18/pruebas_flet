@@ -53,6 +53,9 @@ código** (para que lo abras y lo veas funcionando).
 | 40 | [Cliente HTTP: httpx async, cancelar y `{{variables}}`](#40-cliente-http-httpx-async-cancelar-y-variables) | `modulos/kraken/http/` |
 | 41 | [cURL: `shlex` para leer comandos como la terminal](#41-curl-shlex-para-leer-comandos-como-la-terminal) | `modulos/kraken/http/services.py` |
 | 42 | [SQLite por dentro: solo lectura real, PRAGMA y archivos fuera del respaldo](#42-sqlite-por-dentro-solo-lectura-real-pragma-y-archivos-fuera-del-respaldo) | `modulos/kraken/sqlite/`, `core/backup.py` |
+| 43 | [Red: sockets, ping sin ser root y puertos en paralelo](#43-red-sockets-ping-sin-ser-root-y-puertos-en-paralelo) | `modulos/kraken/red/ping.py`, `puertos.py`, `dispositivos.py` |
+| 44 | [DNS, certificados, Whois y Wake-on-LAN por dentro](#44-dns-certificados-whois-y-wake-on-lan-por-dentro) | `modulos/kraken/red/` |
+| 45 | [Probar red sin internet: servidores falsos](#45-probar-red-sin-internet-servidores-falsos) | `scripts/verificar_kraken.py` |
 
 ---
 
@@ -1058,6 +1061,107 @@ se respalda todo: mejor un zip de más que un archivo perdido.
 `scripts/verificar_kraken.py` (prueba todo sin celular ni internet).
 
 
+## 43. Red: sockets, ping sin ser root y puertos en paralelo
+
+**Socket.** El "enchufe" de red de un programa. `TCP` es una llamada telefónica
+(se conecta, hay respuesta, llega en orden: web, SSH, bases de datos). `UDP` es
+mandar una postal (sin conexión: DNS, Wake-on-LAN). `ICMP` es el idioma de los
+avisos de red: el ping manda un "echo request" y espera un "echo reply".
+
+**Ping sin ser administrador.** El ping clásico usa un socket "crudo" (raw),
+que exige root. Linux y Android permiten otro tipo, **ICMP de datagrama**, si el
+sistema lo autoriza (`/proc/sys/net/ipv4/ping_group_range`); el sistema pone el
+identificador y la suma de verificación por nosotros:
+
+```python
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_ICMP)
+s.sendto(struct.pack("!BBHHH", 8, 0, 0, 0, seq) + b"datos", (ip, 0))  # 8 = echo
+```
+
+Si no se permite: el `ping` del sistema y, al final, **ping TCP** (cuánto tarda
+en conectar al 443/80). Un "conexión rechazada" también cuenta: el equipo
+contestó, está vivo. La pantalla dice qué manera se usó.
+
+**Abierto, cerrado, filtrado.** Al conectar a un puerto: conecta → *abierto*;
+`ConnectionRefusedError` (el equipo mandó "aquí no hay nadie") → *cerrado*;
+no contesta a tiempo → *filtrado* (firewall o equipo apagado).
+
+**Cientos a la vez sin saturar: `asyncio.Semaphore`.** `gather()` lanza todas
+las conexiones, y un semáforo deja pasar solo N al mismo tiempo (como un cadenero):
+
+```python
+limite = asyncio.Semaphore(100)
+async def one(p):
+    async with limite:              # espera turno si ya hay 100 adentro
+        return await tcp_connect(ip, p, timeout)
+await asyncio.gather(*(one(p) for p in puertos))
+```
+
+**Dispositivos en mi red.** Lo mismo, pero a las 254 direcciones de tu red
+(`ipaddress.ip_network("192.168.1.0/24").hosts()`) con 12 puertos comunes; el
+que contesta en cualquiera existe. Por sus puertos se adivina qué es (62078 →
+iPhone, 8009 → Chromecast, 9100 → impresora). Solo deja redes **privadas**
+(`rango.is_private`): así nunca se barre internet por error. Android 10+ ya no
+deja leer la tabla ARP (MAC y fabricante); en Linux sí (`/proc/net/arp`).
+
+**Pintar mientras corre.** Ping y puertos llaman `on_progress(resultado)`; la
+pantalla repinta solo el resultado, sin más de ~5 veces por segundo.
+
+**Dónde.** `modulos/kraken/red/ping.py`, `puertos.py`, `dispositivos.py`,
+`views/prueba.py` (`_progress`, `cancel`).
+
+
+## 44. DNS, certificados, Whois y Wake-on-LAN por dentro
+
+**DNS.** La "agenda" de internet: nombre → IP. Registros: `A`/`AAAA` (IP),
+`CNAME` (alias), `MX` (quién recibe el correo), `TXT` (SPF, verificaciones),
+`NS` (quién administra el dominio), `PTR` (al revés: IP → nombre). Con
+**dnspython** se le pregunta a UN servidor que tú eliges (1.1.1.1 por defecto),
+no al del celular, para ver lo que ve internet y no una respuesta guardada:
+
+```python
+resolver = dns.asyncresolver.Resolver(configure=False)  # no lee la config del equipo
+resolver.nameservers = ["1.1.1.1"]
+respuesta = await resolver.resolve("ejemplo.com", "MX")
+```
+
+**Certificado HTTPS.** Se conecta como un navegador (`ssl.create_default_context()`
+verifica firma, fechas y dominio). Si falla, `SSLCertVerificationError` dice por
+qué (vencido, autofirmado, de otro dominio) y se vuelve a conectar sin verificar
+solo para leer sus datos (`getpeercert(binary_form=True)`). Los días que le
+quedan: `ssl.cert_time_to_seconds(cert["notAfter"])`.
+
+**Whois.** Primero **RDAP** (API web con JSON; `rdap.org` te manda al servidor
+del dominio). Si no hay (varios `.mx`), **WHOIS** clásico: TCP al puerto 43,
+mandas el dominio y regresa texto libre. Se pregunta a `whois.iana.org` quién
+lleva el `.mx`/`.com` y luego a ese. Las fechas vienen en mil formatos
+(`2026-03-15T04:00Z`, `15-mar-2026`, `2026.03.15`): se prueban varios patrones.
+
+**Wake-on-LAN.** UDP a toda la red (broadcast `255.255.255.255`, puertos 9 y 7):
+6 bytes `FF` + la MAC repetida 16 veces = 102 bytes. Hay que permitir broadcast
+en el socket: `s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)`.
+
+**Mi IP local sin mandar nada.** Un socket UDP "conectado" a 1.1.1.1 no envía
+paquetes, pero el sistema decide por qué interfaz saldría:
+`s.connect(("1.1.1.1", 80)); s.getsockname()[0]` → `192.168.1.37`.
+
+**Dónde.** `modulos/kraken/red/consulta_dns.py`, `certificado.py`, `whois.py`,
+`wol.py`, `mi_ip.py`. Equipos y pruebas: tablas `kt_equipos` y
+`kt_historial_red` (migración 0017).
+
+
+## 45. Probar red sin internet: servidores falsos
+
+`scripts/verificar_kraken.py` levanta, en hilos y en `127.0.0.1`, servidores
+que se comportan como los de verdad: un **DNS** con dnspython
+(`dns.message.make_response`), un **WHOIS** (puerto 43) con `socketserver`,
+**RDAP** e **ipinfo** en el mismo servidor HTTP de prueba, un **HTTPS** con
+certificado autofirmado (openssl) y uno vencido, y un socket UDP que recibe
+el paquete de Wake-on-LAN. Los servicios aceptan la dirección como parámetro
+(`servidor=`, `rdap=`, `iana=`, `puerto=`), así la prueba no necesita internet
+y la app usa los reales.
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1072,3 +1176,4 @@ se respalda todo: mejor un zip de más que un archivo perdido.
 | 2026-10-14 | 1.3.0 | 38 (Notas: guardado automático, búsqueda, tarjetas) |
 | 2026-10-14 | 1.4.0 | 39 (Memorias: fotos, un día como hoy, voz; verificar_flet) |
 | 2026-10-14 | 1.5.0 | 40–42 (cliente HTTP async, cURL con shlex, SQLite solo lectura y archivos fuera del respaldo) |
+| 2026-10-14 | 1.6.0 | 43–45 (sockets, ping sin root, puertos en paralelo, dispositivos; DNS, certificados, Whois, WoL; servidores falsos) |

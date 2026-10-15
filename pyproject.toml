@@ -20,6 +20,8 @@ dependencies = [
   "flet-android-notifications==0.12.0",
   # Kraken Tools: cliente HTTP (async, se puede cancelar). Puro Python.
   "httpx==0.28.1",
+  # Kraken Tools · Red: consultas DNS (MX, TXT, NS…) a un servidor elegido. Puro Python.
+  "dnspython==2.8.0",
 ]
 
 [tool.flet]
