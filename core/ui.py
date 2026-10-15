@@ -167,10 +167,12 @@ def swipe_to_delete(  # propio
     )
 
 
-def confirm(page: ft.Page, titulo: str, mensaje: str, on_accept, on_cancel=None):  # propio
+def confirm(page: ft.Page, titulo: str, mensaje: str, on_accept, on_cancel=None,  # propio
+            boton: str = "Eliminar"):
     """
     Diálogo de confirmación con botones Cancelar / Eliminar.
     on_cancel (opcional): se llama si el usuario elige Cancelar.
+    boton (opcional): otro texto para el botón rojo, p. ej. "Ejecutar".
     """
 
     def accept(e):  # propio
@@ -190,7 +192,7 @@ def confirm(page: ft.Page, titulo: str, mensaje: str, on_accept, on_cancel=None)
             actions=[
                 ft.TextButton("Cancelar", on_click=cancel),
                 ft.TextButton(
-                    "Eliminar",
+                    boton,
                     style=ft.ButtonStyle(color=ft.Colors.RED),
                     on_click=accept,
                 ),

@@ -36,7 +36,8 @@ from core import backup, database  # noqa: E402
 from core.storage import DATA_DIR  # noqa: E402
 
 # Carpetas de data/ que usa la app (si agregas una, súmala aquí)
-CARPETAS_DATA = ["desarrollo/1", "adjuntos/1/1", "tareas/1", "capturas", "memorias/1/mini"]
+CARPETAS_DATA = ["desarrollo/1", "adjuntos/1/1", "tareas/1", "capturas", "memorias/1/mini",
+                 "kraken/bases"]
 
 
 def dummy_value(columna: sa.Column, tabla: str):  # propio

@@ -1,5 +1,50 @@
 # Cambios de ControlKraken
 
+## 1.5.0 — 2026-10-14
+
+### Nuevo
+- **Kraken Tools** (módulo nuevo): herramientas de desarrollador en el celular.
+  Pantalla de inicio con tarjetas; Red, SSH y Webhooks aparecen como "Próximamente".
+- **Cliente HTTP (tipo Postman)**:
+  - Método, URL y pestañas **Params**, **Headers**, **Body** (JSON, texto o
+    formulario) y **Auth** (Bearer token o usuario y contraseña).
+  - **Respuesta**: código con color, tiempo, tamaño; JSON bonito o tal cual;
+    headers recibidos y lo que se envió de verdad. Copiar o guardar como archivo
+    (sirve para imágenes y PDF).
+  - **Colecciones** para guardar peticiones (duplicar, mover, renombrar).
+    Una petición guardada se guarda sola al enviar y al salir.
+  - **Entornos y variables** `{{base_url}}`, `{{token}}`: Globales + el entorno
+    elegido (Local, Producción…). Avisa las variables sin definir.
+  - **Historial** de envíos (tocar uno lo abre con su respuesta).
+    **Configurable** en Ajustes: cuántos envíos guardar (50 a 1,000 o sin
+    límite), cuánto de cada respuesta (64 KB a 20 MB o completa) y el tiempo de
+    espera. En pantalla siempre se ve la respuesta completa.
+  - **cURL**: copiar como cURL e **importar cURL** (también pegándolo en la URL).
+  - El envío no congela la pantalla y se puede **cancelar**.
+- **Explorador SQLite**:
+  - La BD de ControlKraken, **siempre en solo lectura**.
+  - Agregar cualquier `.db`: se **copia** a la app (el original no se toca).
+    Por base: solo lectura (por defecto) o editable, y **respaldar sí/no**.
+  - Pestañas **Tablas** (filas, columnas, PK/FK, índices, copiar CREATE),
+    **Datos** (de 50 en 50, búsqueda en todas las columnas, tocar una celda la
+    muestra completa) y **SQL** (varias sentencias, todo o nada; confirmar antes
+    de cambiar datos; favoritas e historial; exportar a CSV).
+  - Descargar una copia de la base.
+- Todo (colecciones, entornos, historial, ajustes, conexiones y consultas) vive
+  en la BD y entra en el respaldo.
+- `scripts/verificar_kraken.py`: prueba el cliente HTTP contra un servidor
+  local, el explorador y el respaldo opcional de bases, sin celular ni internet.
+
+### Cambios
+- Migración 0016: tablas `kt_ajustes`, `kt_colecciones`, `kt_peticiones`,
+  `kt_entornos`, `kt_historial_http`, `kt_sqlite_conexiones`,
+  `kt_sqlite_consultas`. "Kraken Tools" aparece en tu roadmap de Desarrollo.
+- Respaldo: un módulo puede dejar archivos fuera del zip
+  (`backup.register_exclusion`); al restaurar, esos archivos no se borran.
+  `verificar_respaldo.py` pasa con 28 tablas.
+- `confirm()` acepta otro texto para el botón (p. ej. "Ejecutar").
+- Dependencia nueva: `httpx==0.28.1` (pyproject y requirements).
+
 ## 1.4.0 — 2026-10-14
 
 ### Nuevo

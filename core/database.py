@@ -72,6 +72,7 @@ def import_models():  # propio
     import modulos.desarrollo.models  # noqa: F401
     import modulos.notas.models  # noqa: F401
     import modulos.memorias.models  # noqa: F401
+    import modulos.kraken.models  # noqa: F401
 
 
 def alembic_config() -> Config:  # propio

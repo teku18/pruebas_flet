@@ -21,6 +21,11 @@ Otro equipo: si en la carpeta hay un respaldo de OTRO equipo más nuevo que lo
 último que respaldaste o restauraste aquí, la app avisa (newest_foreign).
 Restaurar: valida el zip, guarda tu BD actual en respaldos/, reemplaza la BD y
 data/, y aplica las migraciones si el respaldo es de una versión anterior.
+
+Archivos fuera del respaldo: un módulo puede pedir que ciertos archivos de
+data/ NO entren al zip (register_exclusion), p. ej. una base .db grande de
+Kraken Tools marcada "no respaldar". Al restaurar, esos archivos se apartan y
+se regresan: el respaldo no los trae, pero tampoco se pierden de este equipo.
 """
 import calendar
 import json
@@ -32,6 +37,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Callable
 
 from alembic.script import ScriptDirectory
 
@@ -45,6 +51,29 @@ MANIFEST = "manifest.json"
 CONSERVAR_ULTIMOS = 5
 CONSERVAR_MESES = 12
 PROTEGER_HORAS = 24     # lo más reciente nunca se borra
+
+# Funciones que regresan archivos de data/ que NO van al zip (ver docstring)
+_EXCLUSIONES: list[Callable[[], set[Path]]] = []
+
+
+def register_exclusion(fn: Callable[[], set[Path]]) -> None:  # propio
+    if fn not in _EXCLUSIONES:
+        _EXCLUSIONES.append(fn)
+
+
+def excluded_files() -> set[Path]:  # propio
+    """
+    Archivos que hoy se quedan fuera del respaldo. Si algo falla al
+    preguntar (p. ej. la tabla aún no existe antes de migrar), se respalda
+    TODO: mejor un zip de más que un archivo perdido.
+    """
+    rutas: set[Path] = set()
+    for fn in _EXCLUSIONES:
+        try:
+            rutas |= {Path(r).resolve() for r in fn()}
+        except Exception:  # noqa: BLE001
+            continue
+    return rutas
 
 
 @dataclass
@@ -133,8 +162,9 @@ def create_backup(destino: Path, motivo: str = "manual") -> Path:  # propio
             z.write(copia, DB_PATH.name)
             z.writestr(MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=2))
             if DATA_DIR.exists():
+                fuera = excluded_files()
                 for archivo in DATA_DIR.rglob("*"):
-                    if archivo.is_file():
+                    if archivo.is_file() and archivo.resolve() not in fuera:
                         z.write(archivo, Path("data") / archivo.relative_to(DATA_DIR))
         parcial.replace(final)
     return final
@@ -275,6 +305,7 @@ def restore_backup(zip_path: Path) -> dict:  # propio
     from core import database
 
     manifest = read_manifest(zip_path)
+    conservar = [r for r in excluded_files() if r.is_file()]  # antes de cambiar la BD
     if DB_PATH.exists() and not database.BD_NUEVA:  # equipo nuevo: no hay nada que guardar
         create_backup(LOCAL_DIR, "antes de restaurar")
         prune(LOCAL_DIR, ultimos=5, meses=0)
@@ -287,10 +318,19 @@ def restore_backup(zip_path: Path) -> dict:  # propio
         nueva = DB_PATH.with_suffix(".restaurando")
         shutil.copy2(Path(tmp) / db_in_zip(z.namelist()), nueva)
         nueva.replace(DB_PATH)
+        # Archivos que no viajan en el respaldo: se apartan para no perderlos
+        apartados = Path(tmp) / "_apartados"
+        for k, ruta in enumerate(conservar):
+            (apartados / str(k)).mkdir(parents=True)
+            shutil.move(ruta, apartados / str(k) / ruta.name)
         # Adjuntos
         shutil.rmtree(DATA_DIR, ignore_errors=True)
         if (Path(tmp) / "data").exists():
             shutil.copytree(Path(tmp) / "data", DATA_DIR)
+        for k, ruta in enumerate(conservar):  # de regreso (si el zip no trajo otro)
+            if not ruta.exists():
+                ruta.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(apartados / str(k) / ruta.name, ruta)
 
     database.init_db()  # si el respaldo es de una versión anterior, lo pone al día
     return manifest

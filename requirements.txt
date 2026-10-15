@@ -22,3 +22,6 @@ Pillow==12.2.0
 # Avisos en el celular. En la compu no se usa en la app, pero trae el comando
 # flet-android-notifications-patch que scripts/build_apk.sh necesita.
 flet-android-notifications==0.12.0
+
+# Kraken Tools: cliente HTTP tipo Postman (async: no congela la pantalla)
+httpx==0.28.1

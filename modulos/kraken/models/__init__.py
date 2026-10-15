@@ -1,0 +1,24 @@
+"""
+Modelos de Kraken Tools (todas las tablas empiezan con kt_).
+
+  Ajustes          1 fila: tamaño del historial HTTP, de cada respuesta guardada…
+  Coleccion  1 ──< N  Peticion        (tus peticiones guardadas, como en Postman)
+  Entorno                              (variables {{base_url}}, {{token}}…)
+  HistorialHttp                        (cada envío: lo mandado y lo recibido)
+  ConexionSqlite 1 ──< N ConsultaSqlite (bases .db y sus consultas)
+"""
+from modulos.kraken.models.ajustes import Ajustes
+from modulos.kraken.models.http import (
+    AUTH_SELECTION,
+    BODY_SELECTION,
+    METODOS,
+    Coleccion,
+    Entorno,
+    HistorialHttp,
+    Peticion,
+)
+from modulos.kraken.models.sqlite import BASES_DIR, ConexionSqlite, ConsultaSqlite
+
+__all__ = ["AUTH_SELECTION", "Ajustes", "BASES_DIR", "BODY_SELECTION", "Coleccion",
+           "ConexionSqlite", "ConsultaSqlite", "Entorno", "HistorialHttp", "METODOS",
+           "Peticion"]

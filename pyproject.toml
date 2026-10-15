@@ -18,6 +18,8 @@ dependencies = [
   # Avisos de la Agenda con la app cerrada (Flutter flutter_local_notifications).
   # Necesita un parche al proyecto Android: lo aplica scripts/build_apk.sh.
   "flet-android-notifications==0.12.0",
+  # Kraken Tools: cliente HTTP (async, se puede cancelar). Puro Python.
+  "httpx==0.28.1",
 ]
 
 [tool.flet]
@@ -52,10 +54,12 @@ app = false                   # deja los .py (Alembic lee las migraciones como a
 target_arch = ["arm64-v8a"]   # celulares modernos; APK más ligero
 
 # Permisos de Android (AndroidManifest.xml):
+#   INTERNET                Kraken Tools (cliente HTTP). Flet ya lo pone; aquí queda a la vista
 #   POST_NOTIFICATIONS      mostrar avisos (Android 13+ lo pregunta al abrir)
 #   SCHEDULE_EXACT_ALARM    avisos a la hora exacta (Configuración → Avisos)
 #   RECEIVE_BOOT_COMPLETED  volver a programarlos al reiniciar el celular
 [tool.flet.android.permission]
+"android.permission.INTERNET" = true
 "android.permission.POST_NOTIFICATIONS" = true
 "android.permission.SCHEDULE_EXACT_ALARM" = true
 "android.permission.RECEIVE_BOOT_COMPLETED" = true

@@ -50,6 +50,9 @@ código** (para que lo abras y lo veas funcionando).
 | 37 | [Avisos de la Agenda: proveedores y eventos](#37-avisos-de-la-agenda-proveedores-eventos-y-reprograma-todo) | `core/avisos.py`, `modulos/agenda/avisos.py` |
 | 38 | [Notas: guardado automático, EXISTS y 2 columnas](#38-notas-guardado-automático-búsqueda-con-exists-y-tarjetas-en-2-columnas) | `modulos/notas/` |
 | 39 | [Memorias: fotos con Pillow, un día como hoy, voz](#39-memorias-fotos-con-pillow-un-día-como-hoy-y-diseño-listo-para-la-voz) | `modulos/memorias/`, `scripts/verificar_flet.py` |
+| 40 | [Cliente HTTP: httpx async, cancelar y `{{variables}}`](#40-cliente-http-httpx-async-cancelar-y-variables) | `modulos/kraken/http/` |
+| 41 | [cURL: `shlex` para leer comandos como la terminal](#41-curl-shlex-para-leer-comandos-como-la-terminal) | `modulos/kraken/http/services.py` |
+| 42 | [SQLite por dentro: solo lectura real, PRAGMA y archivos fuera del respaldo](#42-sqlite-por-dentro-solo-lectura-real-pragma-y-archivos-fuera-del-respaldo) | `modulos/kraken/sqlite/`, `core/backup.py` |
 
 ---
 
@@ -928,6 +931,133 @@ migración 0015, `scripts/verificar_flet.py`.
 
 ---
 
+## 40. Cliente HTTP: httpx async, cancelar y `{{variables}}`
+
+**Qué es una petición HTTP.** Lo que hace el navegador o una app al hablar con
+un servidor: un **método** (GET leer, POST crear, PUT/PATCH cambiar, DELETE
+borrar), una **URL** (con `?params=...`), **headers** (datos extra:
+`Content-Type`, `Authorization`…) y a veces un **body** (JSON, texto o
+formulario). Regresa un **código** (2xx bien, 3xx redirección, 4xx error tuyo,
+5xx error del servidor), headers y un body. Un 404 *sí es* una respuesta; un
+"no se pudo conectar" no lo es (por eso el error va aparte en `Resultado.error`).
+
+**Por qué httpx y no requests.** `requests` solo es síncrono: mientras espera,
+el hilo se queda parado. `httpx` tiene `AsyncClient`, y `await cliente.send(...)`
+suelta el control mientras llega la respuesta. Así la pantalla sigue viva y se
+puede **cancelar**:
+
+```python
+async def send(self, e=None):
+    self._tarea = asyncio.current_task()      # el botón Cancelar guarda esta tarea
+    try:
+        self.resultado = await services.send(self.b)
+    except asyncio.CancelledError:            # alguien llamó self._tarea.cancel()
+        notify(self.page, "Envío cancelado")
+```
+
+`task.cancel()` hace que el `await` en curso lance `CancelledError`. El servicio
+lo deja pasar (no lo atrapa como "error de red") y así no ensucia el historial.
+
+**Leer por trozos (`stream=True`).** La respuesta se lee con `aiter_bytes()` y
+se corta a los 50 MB: una descarga gigante no se come la memoria del celular.
+
+**Variables `{{así}}`.** Una expresión regular busca `{{nombre}}` y lo cambia
+por su valor: primero las Globales y encima las del entorno elegido (un `dict`
+actualizado con `update()`: si las dos tienen `token`, gana el entorno). Las que
+no existen se quedan tal cual y el editor las avisa ("Sin definir: {{token}}").
+
+**Historial con límites configurables.** Cada envío se guarda (lo mandado y lo
+recibido). En Ajustes eliges cuántos envíos y cuánto de cada respuesta;
+recortar texto UTF‑8 por bytes sin romper una "ñ" a la mitad:
+`datos[:limite].decode("utf-8", errors="ignore")`.
+
+**Listas clave/valor en JSON.** Params, headers, formulario y variables se
+guardan en una columna `JSON`: `[{"clave": "page", "valor": "2", "activo": true}]`.
+Una petición es una sola fila y se copia o respalda completa. (En Odoo sería
+como un campo `Json`/serializado en vez de un One2many: para listas chicas que
+siempre se leen juntas, conviene.)
+
+**Dónde.** `modulos/kraken/http/services.py` (`build`, `send`, `variables`,
+`prune_history`), `views/editor.py` (`send`, `cancel`), `models/ajustes.py`.
+
+
+## 41. cURL: `shlex` para leer comandos como la terminal
+
+**Qué es.** `curl` es el cliente HTTP de la terminal. Chrome (F12 → Network →
+clic derecho → *Copy as cURL*), Postman y casi toda documentación de APIs te
+dan las peticiones como un `curl ...`. Pegarlo en la app y que se llene sola
+ahorra mucho.
+
+**Partirlo bien: `shlex.split`.** Separar por espacios no sirve: los textos
+entre comillas traen espacios. `shlex` parte como lo haría la terminal:
+
+```python
+shlex.split("curl -H 'Authorization: Bearer x' -d '{\"a\": 1}' https://x.com")
+# ['curl', '-H', 'Authorization: Bearer x', '-d', '{"a": 1}', 'https://x.com']
+```
+
+Y al revés, `shlex.quote()` pone comillas solo donde hace falta para "Copiar
+como cURL". Antes se quitan los `\` de fin de línea (comandos de varias líneas).
+
+**Reglas que imita.** `-d` sin `-X` → POST; `?a=1` de la URL → pestaña Params;
+`Authorization: Bearer …` → pestaña Auth; `-u usuario:clave` → Basic; si el
+body parece JSON → tipo JSON. Opciones que no importan aquí (`-s`, `-L`, `-k`,
+`--compressed`) se ignoran.
+
+**Truco.** Pegar un `curl …` directo en el campo de la URL también lo importa.
+
+**Dónde.** `modulos/kraken/http/services.py` → `parse_curl()`, `to_curl()`.
+
+
+## 42. SQLite por dentro: solo lectura real, PRAGMA y archivos fuera del respaldo
+
+**Solo lectura de verdad.** No basta con "no mostrar el botón": la conexión se
+abre en modo lectura y SQLite mismo rechaza cualquier escritura:
+
+```python
+sqlite3.connect(f"{ruta.resolve().as_uri()}?mode=ro", uri=True)
+con.execute("PRAGMA query_only = 1")    # segundo candado
+# DELETE ... -> sqlite3.OperationalError: attempt to write a readonly database
+```
+
+La BD de ControlKraken siempre se abre así: el explorador no puede romper la app.
+
+**Mirar adentro con PRAGMA.** Son "comandos de consulta" de SQLite:
+`PRAGMA table_info(t)` (columnas, tipo, NOT NULL, PK), `foreign_key_list(t)`
+(llaves foráneas), `index_list(t)` + `index_info(i)` (índices). Y
+`sqlite_master` es la tabla donde SQLite guarda el `CREATE` de todo. Es lo que
+muestran DBeaver o pgAdmin, sin instalar nada.
+
+**Varias sentencias y "todo o nada".** `sqlite3.complete_statement()` dice si
+un texto es una sentencia completa (respeta los `;` dentro de comillas). Se
+ejecutan una por una dentro de la misma transacción: si una falla,
+`rollback()` y no se aplica ninguna.
+
+**Copiar en vez de abrir el original.** En Android el FilePicker regresa el
+contenido, no una ruta estable. Por eso las bases se copian a
+`data/kraken/bases/` (como los adjuntos). "Descargar copia" usa la API de
+respaldo de SQLite (`origen.backup(destino)`), la misma que el respaldo de la
+app: copia consistente aunque la base esté abierta.
+
+**Archivos fuera del respaldo (gancho en `core/backup.py`).** Un módulo
+registra una función que dice qué archivos de `data/` NO van al zip:
+
+```python
+backup.register_exclusion(_files_outside_backup)   # bases con respaldar=False
+```
+
+El respaldo los salta, y al **restaurar** se apartan y se regresan, para que
+no se pierdan de este equipo (el zip no los trae). Si algo falla al preguntar,
+se respalda todo: mejor un zip de más que un archivo perdido.
+
+**El SQL en otro hilo.** `await asyncio.to_thread(services.run, base, sql)`
+(nota 19): una consulta pesada no congela la pantalla.
+
+**Dónde.** `modulos/kraken/sqlite/services.py`, `views/base.py`,
+`models/sqlite.py`, `core/backup.py` (`register_exclusion`, `excluded_files`),
+`scripts/verificar_kraken.py` (prueba todo sin celular ni internet).
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -941,3 +1071,4 @@ migración 0015, `scripts/verificar_flet.py`.
 | 2026-10-14 | 1.2.1 | 36 (resultado de la prueba) y 37 (avisos de la Agenda) |
 | 2026-10-14 | 1.3.0 | 38 (Notas: guardado automático, búsqueda, tarjetas) |
 | 2026-10-14 | 1.4.0 | 39 (Memorias: fotos, un día como hoy, voz; verificar_flet) |
+| 2026-10-14 | 1.5.0 | 40–42 (cliente HTTP async, cURL con shlex, SQLite solo lectura y archivos fuera del respaldo) |
