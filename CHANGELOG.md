@@ -1,5 +1,47 @@
 # Cambios de ControlKraken
 
+## 1.8.2 — 2026-10-15
+
+### Nuevo
+- **Cliente HTTP: variables como en Postman.**
+  - **Colores**: bajo la URL, los params, los headers, el body y la auth se ve
+    el texto con las variables pintadas: **azul** si existe, **rojo
+    subrayado** si no está en Globales ni en el entorno elegido. Cambia al
+    cambiar de entorno.
+  - Tocar esa línea muestra qué vale cada variable (y cuál falta), con
+    acceso directo a "Editar variables".
+  - **Autocompletar**: al escribir `{{` salen tus variables (nombre y valor);
+    al ir escribiendo se filtran (`{{to` -> token, token_admin…). Tocar una
+    la completa como `{{token}}`, sin duplicar las llaves.
+
+### Notas
+- Flet no puede pintar de colores una parte del texto dentro del propio campo:
+  la versión de colores va justo debajo y solo aparece si hay variables.
+
+## 1.8.1 — 2026-10-15
+
+### Nuevo
+- **Cliente HTTP compatible con Postman** (formato Collection v2.1, el que
+  exporta Postman hoy; también lee la v2.0):
+  - **Importar de Postman** (Cliente HTTP, menú de tres puntos): colecciones y
+    entornos `.json`, varios a la vez. También el "Export data" de Postman.
+  - **Exportar a Postman**: en el menú de cada colección, y el botón de
+    compartir en cada entorno. En Postman: Import y eliges el archivo.
+  - Carpetas anidadas: quedan en el nombre ("Usuarios / Admin / Crear") y al
+    exportar se vuelven a armar como carpetas.
+  - Auth de la colección o carpeta se copia a cada petición que la hereda.
+    Bearer, Basic y API Key; las demás (OAuth 2…) quedan en "Ninguna" con aviso.
+  - Body JSON, texto, x-www-form-urlencoded, form-data (sin archivos) y
+    GraphQL (como JSON).
+  - Variables de la colección: se crea un entorno con su nombre.
+  - Al terminar dice qué no se pudo traer (scripts, archivos, auth no soportada).
+  - Exportar e importar de nuevo deja la colección idéntica (probado).
+
+### Cambios
+- `verificar_kraken.py` prueba Postman (importar, exportar e ida y vuelta).
+  Además se probó con las 54 colecciones de ejemplo de Newman (la herramienta
+  oficial de Postman): todas entran sin errores.
+
 ## 1.8.0 — 2026-10-15
 
 ### Nuevo

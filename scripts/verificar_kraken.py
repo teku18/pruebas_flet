@@ -242,6 +242,155 @@ def test_http(base: str):  # propio
     check(True, "rechaza textos que no son curl, sin URL o mal cerrados")
 
 
+POSTMAN_V21 = {
+    "info": {"_postman_id": "x", "name": "Mi API Odoo",
+             "description": {"content": "Pruebas"},
+             "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+    "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]},
+    "variable": [{"key": "base", "value": "http://localhost:8069"}],
+    "event": [{"listen": "prerequest", "script": {"exec": ["console.log(1)"]}}],
+    "item": [
+        {"name": "Usuarios", "item": [
+            {"name": "Listar", "request": {
+                "method": "GET", "header": [{"key": "Accept", "value": "application/json"},
+                                            {"key": "X-Off", "value": "1", "disabled": True}],
+                "url": {"raw": "{{base}}/api/users?page=2&q=a%20b", "host": ["{{base}}"],
+                        "path": ["api", "users"],
+                        "query": [{"key": "page", "value": "2"}, {"key": "q", "value": "a b"},
+                                  {"key": "debug", "value": "1", "disabled": True}]}},
+             "event": [{"listen": "test", "script": {"exec": ["pm.test()"]}}]},
+            {"name": "Admin", "auth": {"type": "basic", "basic": [
+                {"key": "username", "value": "admin"}, {"key": "password", "value": "secreto"}]},
+             "item": [
+                {"name": "Crear", "request": {
+                    "method": "POST", "url": "{{base}}/api/users",
+                    "body": {"mode": "raw", "raw": "{\"name\": \"Ana\"}",
+                             "options": {"raw": {"language": "json"}}}}},
+                {"name": "Sin auth", "request": {"method": "DELETE", "auth": {"type": "noauth"},
+                                                 "url": "{{base}}/api/users/1"}}]}]},
+        {"name": "Login", "request": {"method": "POST", "url": "{{base}}/web/login",
+                                      "body": {"mode": "urlencoded", "urlencoded": [
+                                          {"key": "login", "value": "a@b.c"},
+                                          {"key": "password", "value": "x"}]}}},
+        {"name": "Subir", "request": {"method": "POST", "url": "{{base}}/upload",
+                                      "body": {"mode": "formdata", "formdata": [
+                                          {"key": "titulo", "value": "foto"},
+                                          {"key": "archivo", "type": "file", "src": "/a.png"}]}}},
+        {"name": "GraphQL", "request": {"method": "POST", "url": "{{base}}/graphql",
+                                        "body": {"mode": "graphql", "graphql": {
+                                            "query": "{ me { id } }", "variables": "{\"a\": 1}"}}}},
+        {"name": "Con API key", "request": {
+            "method": "GET", "url": "https://api.x.com/v1",
+            "auth": {"type": "apikey", "apikey": [{"key": "key", "value": "X-Key"},
+                                                  {"key": "value", "value": "abc"},
+                                                  {"key": "in", "value": "header"}]}}},
+        {"name": "OAuth", "request": {"method": "GET", "url": "https://x.com",
+                                      "auth": {"type": "oauth2", "oauth2": []}}},
+    ],
+}
+
+
+def test_postman():  # propio
+    """Importar y exportar colecciones y entornos de Postman (v2.1)."""
+    from modulos.kraken.http import postman
+    from modulos.kraken.models import Coleccion, Entorno
+
+    print("Postman")
+    r = postman.import_file(json.dumps(POSTMAN_V21).encode(), "mi.json")
+    check(r.peticiones == 8 and r.colecciones == ["Mi API Odoo"], f"importa: {r.summary()}")
+    c = Coleccion.search(Coleccion.nombre == "Mi API Odoo")[0]
+    p = {x.nombre: x for x in c.peticiones}
+    check([x.nombre for x in c.peticiones][:3] == ["Usuarios / Listar", "Usuarios / Admin / Crear",
+                                                   "Usuarios / Admin / Sin auth"],
+          "carpetas anidadas -> 'Usuarios / Admin / Crear' y en el mismo orden")
+    listar = p["Usuarios / Listar"]
+    check(listar.url == "{{base}}/api/users"
+          and [(f["clave"], f["valor"], f["activo"]) for f in listar.params]
+          == [("page", "2", True), ("q", "a b", True), ("debug", "1", False)],
+          "URL sin query + params (también los desactivados)")
+    check(listar.headers[1]["activo"] is False, "header desactivado se respeta")
+    check(listar.auth_tipo == "bearer" and listar.auth_usuario == "{{token}}",
+          "auth de la colección se hereda")
+    crear = p["Usuarios / Admin / Crear"]
+    check(crear.auth_tipo == "basic" and crear.auth_clave == "secreto"
+          and crear.body_tipo == "json" and '"Ana"' in crear.body,
+          "auth de la carpeta + body JSON")
+    check(p["Usuarios / Admin / Sin auth"].auth_tipo == "ninguna", "noauth = Ninguna")
+    check(p["Login"].body_tipo == "form" and len(p["Login"].form) == 2, "urlencoded -> Formulario")
+    check(p["Subir"].form == [{"clave": "titulo", "valor": "foto", "activo": True}],
+          "form-data: el archivo se omite")
+    check(json.loads(p["GraphQL"].body) == {"query": "{ me { id } }", "variables": {"a": 1}},
+          "GraphQL -> JSON")
+    check(p["Con API key"].headers == [{"clave": "X-Key", "valor": "abc", "activo": True}],
+          "API Key -> header")
+    check(any("script" in a for a in r.avisos) and any("archivo" in a for a in r.avisos)
+          and any("oauth2" in a for a in r.avisos) and any("entorno" in a for a in r.avisos),
+          "avisa scripts, archivos, auth no soportada y variables")
+    e = Entorno.search(Entorno.nombre == "Mi API Odoo")[0]
+    check(e.variables == [{"clave": "base", "valor": "http://localhost:8069", "activo": True}],
+          "variables de la colección -> entorno")
+    r2 = postman.import_file(json.dumps(POSTMAN_V21), "otra")
+    check(r2.colecciones == ["Mi API Odoo (2)"], "nombre repetido -> (2)")
+
+    nombre, datos = postman.export_collection(c.id)
+    doc = json.loads(datos)
+    check(nombre == "Mi_API_Odoo.postman_collection.json" and doc["info"]["schema"].endswith(
+        "v2.1.0/collection.json"), "exporta v2.1")
+    usuarios = doc["item"][0]
+    check(usuarios["name"] == "Usuarios" and usuarios["item"][1]["name"] == "Admin"
+          and usuarios["item"][1]["item"][0]["name"] == "Crear", "las carpetas se vuelven a armar")
+    url = usuarios["item"][0]["request"]["url"]
+    check(url["raw"] == "{{base}}/api/users?page=2&q=a b" and len(url["query"]) == 3
+          and url["query"][2]["disabled"], "URL de vuelta con su query")
+    # ida y vuelta: lo exportado se vuelve a importar igual
+    r3 = postman.import_file(datos)
+    c3 = Coleccion.search(Coleccion.nombre == r3.colecciones[0])[0]
+    campos = lambda x: (x.nombre, x.metodo, x.url, x.params, x.headers, x.body_tipo, x.body,  # noqa: E731
+                        x.form, x.auth_tipo, x.auth_usuario, x.auth_clave)
+    check([campos(x) for x in c3.peticiones] == [campos(x) for x in c.peticiones],
+          "ida y vuelta: exportar e importar deja todo igual")
+
+    nombre, datos = postman.export_environment(e.id)
+    env = json.loads(datos)
+    check(env["name"] == "Mi API Odoo" and env["values"][0]["key"] == "base", "exporta entorno")
+    r4 = postman.import_file(datos)
+    check(len(r4.entornos) == 1 and not r4.colecciones and Entorno.search(
+        Entorno.nombre == r4.entornos[0])[0].variables == e.variables,
+          f"importa entorno: «{r4.entornos[0]}»")
+    for malo, texto in ((b"no es json", "JSON"), (b"[1,2]", "Postman"), (b'{"a": 1}', "Postman")):
+        try:
+            postman.import_file(malo)
+            check(False, f"aceptó {malo!r}")
+        except ValueError as ex:
+            check(texto in str(ex), f"rechaza {malo[:10]!r}: {ex}")
+
+
+def test_variables_ui():  # propio
+    """Pintar y autocompletar {{variables}} (la lógica; lo visual se revisa en el navegador)."""
+    from modulos.kraken.http import services as s
+
+    print("Variables: colores y autocompletar")
+    check(s.split_variables("{{base}}/u/{{ id }}?x=1") == [
+        ("{{base}}", "base"), ("/u/", None), ("{{ id }}", "id"), ("?x=1", None)],
+          "separa texto y variables (también con espacios)")
+    check(s.split_variables("sin nada") == [("sin nada", None)] and s.split_variables("") == [],
+          "texto sin variables")
+    check(s.variable_at_cursor("{{base}}/{{to", None) == (9, "to"), "detecta {{to al final")
+    check(s.variable_at_cursor("{{to}}/x", 4) == (0, "to"), "detecta en medio (cursor)")
+    check(s.variable_at_cursor("x {{", None) == (2, ""), "recién abierta: {{")
+    check(s.variable_at_cursor("{{a}} b", None) is None and s.variable_at_cursor("{{a b", None)
+          is None, "ya cerrada o con espacio: no sugiere")
+    valores = {"token": "1", "auth_token": "2", "base": "3", "Token_admin": "4"}
+    check([k for k, _ in s.suggest_variables("to", valores)] == ["Token_admin", "token",
+                                                                 "auth_token"],
+          "sugiere: primero las que empiezan, sin distinguir mayúsculas")
+    check(len(s.suggest_variables("", valores)) == 4, "{{ sola: todas")
+    check(s.insert_variable("{{ba}}/x", 0, 4, "base") == ("{{base}}/x", 8),
+          "completa sin duplicar }}")
+    check(s.insert_variable("a {{t", 2, None, "token") == ("a {{token}}", 11), "completa al final")
+    check(s.insert_variable("{{t}/x", 0, 3, "token") == ("{{token}}/x", 9), "con una sola }")
+
+
 def make_test_db(ruta: Path):  # propio
     con = sqlite3.connect(ruta)
     con.executescript("""
@@ -1039,6 +1188,8 @@ def main() -> int:  # propio
     print(f"Carpeta de prueba: {TMP}")
     base = start_server()
     test_http(base)
+    test_postman()
+    test_variables_ui()
     conexion_id = test_sqlite()
     test_backup(conexion_id)
     test_red(base)

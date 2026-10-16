@@ -122,8 +122,11 @@ class KeyValueEditor:
     """
 
     def __init__(self, page: ft.Page, on_change, clave: str = "Clave", valor: str = "Valor",
-                 agregar: str = "Agregar"):
+                 agregar: str = "Agregar", asistente=None, grupo: str = ""):
+        """asistente: un VariableAssist (pinta y autocompleta {{variables}}); grupo: su nombre."""
         self.page = page
+        self.asistente = asistente
+        self.grupo = grupo or str(id(self))
         self.on_change = on_change
         self.textos = (clave, valor, agregar)
         self.filas: list[dict] = []
@@ -136,6 +139,8 @@ class KeyValueEditor:
 
     def _render(self):  # propio
         clave, valor, agregar = self.textos
+        if self.asistente is not None:
+            self.asistente.forget(self.grupo)   # los campos viejos se van
         controles = [self._row(k, f, clave, valor) for k, f in enumerate(self.filas)]
         controles.append(ft.TextButton(agregar, icon=ft.Icons.ADD, on_click=self.add))
         self.control.controls = controles
@@ -146,15 +151,23 @@ class KeyValueEditor:
             fila[campo] = texto
             self.on_change()
 
-        return ft.Row(spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[
+        txt_clave = ft.TextField(value=fila.get("clave", ""), hint_text=clave, dense=True, expand=2,
+                                 autofocus=k == self._enfocar,
+                                 text_style=ft.TextStyle(font_family=MONO),
+                                 on_change=lambda e: set_field("clave", e.control.value))
+        txt_valor = ft.TextField(value=fila.get("valor", ""), hint_text=valor, dense=True,
+                                 expand=3, text_style=ft.TextStyle(font_family=MONO),
+                                 on_change=lambda e: set_field("valor", e.control.value))
+        campos: list[ft.Control] = [txt_clave, txt_valor]
+        if self.asistente is not None:
+            campos = [self.asistente.attach(txt_clave, self.grupo),
+                      self.asistente.attach(txt_valor, self.grupo)]
+        alineado = (ft.CrossAxisAlignment.START if self.asistente is not None
+                    else ft.CrossAxisAlignment.CENTER)
+        return ft.Row(spacing=4, vertical_alignment=alineado, controls=[
             ft.Checkbox(value=fila.get("activo", True),
                         on_change=lambda e: set_field("activo", e.control.value)),
-            ft.TextField(value=fila.get("clave", ""), hint_text=clave, dense=True, expand=2,
-                         autofocus=k == self._enfocar, text_style=ft.TextStyle(font_family=MONO),
-                         on_change=lambda e: set_field("clave", e.control.value)),
-            ft.TextField(value=fila.get("valor", ""), hint_text=valor, dense=True, expand=3,
-                         text_style=ft.TextStyle(font_family=MONO),
-                         on_change=lambda e: set_field("valor", e.control.value)),
+            *campos,
             ft.IconButton(ft.Icons.CLOSE, icon_size=18, tooltip="Quitar",
                           on_click=lambda e, kk=k: self.remove(kk)),
         ])

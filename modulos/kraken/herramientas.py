@@ -22,7 +22,7 @@ class Herramienta:
 
 
 HERRAMIENTAS = [
-    Herramienta("Cliente HTTP", "Peticiones a APIs, como Postman", ft.Icons.HTTP,
+    Herramienta("Cliente HTTP", "Peticiones a APIs; importa y exporta Postman", ft.Icons.HTTP,
                 ft.Colors.ORANGE, routes.HTTP),
     Herramienta("Explorador de bases", "SQLite, PostgreSQL y MySQL (directo o por SSH)", ft.Icons.STORAGE,
                 ft.Colors.BLUE, routes.SQLITE),

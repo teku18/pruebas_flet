@@ -11,6 +11,9 @@ Entornos y variables (/kraken/http/entornos):
   `token`, gana el del entorno). Úsalas como {{token}} en URL, params, headers,
   body o auth.
 
+Postman: el botón de compartir exporta el entorno (Environments > Import en
+Postman). Para traer uno de Postman: Cliente HTTP > ⋮ > Importar de Postman.
+
 Se guarda solo (0.8 s después de que dejas de escribir), como Notas.
 Los valores se guardan tal cual (texto normal) y viajan en el respaldo.
 
@@ -20,9 +23,10 @@ import asyncio
 
 import flet as ft
 
-from core.ui import confirm, notify
+from core.ui import confirm, notify, service
 from modulos.kraken import routes
 from modulos.kraken.comun import KeyValueEditor, ask_text
+from modulos.kraken.http import postman
 from modulos.kraken.models import Ajustes, Entorno
 
 PAUSA_GUARDADO = 0.8
@@ -90,9 +94,11 @@ class EnvironmentsView:
 
         e = self.entorno
         self.lbl_nombre.value = e.nombre
+        exportar = ft.IconButton(ft.Icons.IOS_SHARE, tooltip="Exportar a Postman",
+                                 on_click=lambda ev: self.page.run_task(self.export_postman))
         if e.es_global:
             self.acciones.controls = [ft.Text("Siempre activas", size=12,
-                                              color=ft.Colors.OUTLINE)]
+                                              color=ft.Colors.OUTLINE), exportar]
         else:
             usando = activo == e.id
             self.acciones.controls = [
@@ -100,6 +106,7 @@ class EnvironmentsView:
                               icon=ft.Icons.CHECK_CIRCLE if usando else ft.Icons.RADIO_BUTTON_OFF,
                               on_click=lambda ev: self.toggle_active()),
                 ft.IconButton(ft.Icons.EDIT, tooltip="Renombrar", on_click=lambda ev: self.rename()),
+                exportar,
                 ft.IconButton(ft.Icons.DELETE, tooltip="Eliminar", icon_color=ft.Colors.RED,
                               on_click=lambda ev: self.confirm_delete()),
             ]
@@ -109,6 +116,15 @@ class EnvironmentsView:
         self.save()
         self.load(entorno_id)
         self.page.update()
+
+    async def export_postman(self):  # propio
+        self.save()
+        nombre, datos = postman.export_environment(self.entorno.id)
+        ruta = await service(self.page, ft.FilePicker).save_file(
+            dialog_title="Exportar entorno a Postman", file_name=nombre,
+            file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["json"], src_bytes=datos)
+        if ruta or self.page.web:
+            notify(self.page, "Listo: en Postman usa Import y elige este archivo")
 
     def toggle_active(self):  # propio
         usando = Ajustes.current().entorno_id == self.entorno.id

@@ -1,7 +1,7 @@
 """
 Cliente HTTP (/kraken/http):
 
-  Cliente HTTP                      [{} entornos] [⚙] [⋮ nueva colección · importar cURL]
+  Cliente HTTP     [{} entornos] [⚙] [⋮ nueva colección · importar cURL · importar de Postman]
   (Colecciones) (Historial 37)
   ▾ Mi API (3)                                           [⋮]
       GET   Usuarios          {{base}}/users
@@ -12,16 +12,20 @@ Cliente HTTP (/kraken/http):
 
   Historial: 200 OK · GET · https://…  · 14:32:05 · 120 ms   (tocar = ver de nuevo)
 
+Postman: "Importar de Postman" acepta colecciones (v2.1/v2.0) y entornos
+(.json); el ⋮ de cada colección la exporta para abrirla en Postman.
+
 Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
+import asyncio
 from datetime import date
 
 import flet as ft
 
-from core.ui import add_button, confirm, notify
+from core.ui import add_button, confirm, notify, service
 from modulos.kraken import routes
 from modulos.kraken.comun import ask_text, empty_state, method_badge, status_chip, tabs_row
-from modulos.kraken.http import services
+from modulos.kraken.http import postman, services
 from modulos.kraken.http.views.ajustes import settings_dialog
 from modulos.kraken.models import Coleccion, HistorialHttp, Peticion
 
@@ -54,6 +58,9 @@ class HttpHome:
                                      on_click=lambda e: self.new_collection()),
                     ft.PopupMenuItem(content=ft.Text("Importar cURL…"), icon=ft.Icons.INPUT,
                                      on_click=lambda e: self.import_curl()),
+                    ft.PopupMenuItem(content=ft.Text("Importar de Postman…"),
+                                     icon=ft.Icons.FILE_OPEN,
+                                     on_click=lambda e: page.run_task(self.import_postman)),
                 ]),
             ]),
             floating_action_button=add_button("Nueva petición", lambda e: on_new()),
@@ -112,6 +119,8 @@ class HttpHome:
                                  on_click=lambda e: self.on_new(coleccion_id=c.id)),
                 ft.PopupMenuItem(content=ft.Text("Renombrar"), icon=ft.Icons.EDIT,
                                  on_click=lambda e: self.rename_collection(c)),
+                ft.PopupMenuItem(content=ft.Text("Exportar a Postman"), icon=ft.Icons.IOS_SHARE,
+                                 on_click=lambda e: self.page.run_task(self.export_postman, c)),
                 ft.PopupMenuItem(content=ft.Text("Eliminar"), icon=ft.Icons.DELETE,
                                  on_click=lambda e: self.delete_collection(c)),
             ]),
@@ -207,6 +216,54 @@ class HttpHome:
         ask_text(self.page, "Importar cURL", ok, etiqueta="Pega aquí el comando curl",
                  boton="Importar", multilinea=True,
                  ayuda="Sirve el «Copy as cURL» de Chrome, Postman o la documentación de una API")
+
+    async def import_postman(self):  # propio
+        archivos = await service(self.page, ft.FilePicker).pick_files(
+            dialog_title="Colección o entorno de Postman (.json)", allow_multiple=True,
+            file_type=ft.FilePickerFileType.ANY,   # en Android .json no siempre tiene tipo
+            with_data=True)
+        if not archivos:
+            return
+        textos, avisos = [], []
+        for f in archivos:
+            try:
+                datos = f.bytes
+                if datos is None and f.path:
+                    datos = await asyncio.to_thread(lambda p=f.path: open(p, "rb").read())
+                r = await asyncio.to_thread(postman.import_file, datos or b"", f.name)
+            except (ValueError, OSError) as ex:
+                textos.append(f"{f.name}: {ex}")
+                continue
+            textos.append(r.summary())
+            avisos += r.avisos
+            for nombre in r.colecciones:
+                encontradas = Coleccion.search(Coleccion.nombre == nombre)
+                if encontradas:
+                    self.abiertas.add(encontradas[0].id)
+        self.pestana = "colecciones"
+        self.refresh()
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text("Importar de Postman"),
+            content=ft.Container(width=440, content=ft.Column(
+                tight=True, spacing=8,
+                scroll=ft.ScrollMode.AUTO if len(textos) + len(avisos) > 8 else None, controls=[
+                    *[ft.Text(t) for t in textos],
+                    *([ft.Text("Ojo:", weight=ft.FontWeight.BOLD)] if avisos else []),
+                    *[ft.Text(f"- {a}", size=13, color=ft.Colors.OUTLINE) for a in avisos]])),
+            actions=[ft.TextButton("Listo", on_click=lambda e: self.page.pop_dialog())],
+        ))
+
+    async def export_postman(self, c: Coleccion):  # propio
+        try:
+            nombre, datos = postman.export_collection(c.id)
+        except ValueError as ex:
+            notify(self.page, str(ex))
+            return
+        ruta = await service(self.page, ft.FilePicker).save_file(
+            dialog_title="Exportar a Postman", file_name=nombre,
+            file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["json"], src_bytes=datos)
+        if ruta or self.page.web:
+            notify(self.page, "Listo: en Postman usa Import y elige este archivo")
 
     # ==================================================================
     # Historial

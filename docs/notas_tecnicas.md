@@ -62,6 +62,8 @@ código** (para que lo abras y lo veas funcionando).
 | 49 | [Solo lectura y 30 s: que lo cuide el servidor](#49-solo-lectura-y-30-s-que-lo-cuide-el-servidor) | `motores.py` (`connect`) |
 | 50 | [Túnel SSH: llegar a la base sin abrir puertos](#50-túnel-ssh-llegar-a-la-base-sin-abrir-puertos) | `modulos/kraken/ssh/tunel.py` |
 | 51 | [Consola SSH sin terminal: carpeta, sudo y Ctrl+C](#51-consola-ssh-sin-terminal-carpeta-sudo-y-ctrlc) | `modulos/kraken/ssh/consola.py` |
+| 52 | [Postman: el formato Collection v2.1](#52-postman-el-formato-collection-v21) | `modulos/kraken/http/postman.py` |
+| 53 | [Variables de colores y autocompletar: cursor y TextSpan](#53-variables-de-colores-y-autocompletar-cursor-y-textspan) | `modulos/kraken/http/views/variables.py` |
 
 ---
 
@@ -1366,6 +1368,85 @@ servidor. La salida llega en pedazos desde un hilo y la pantalla se pinta cada
 `Consola.run/complete/cancel`), `views/consola.py`.
 
 
+## 52. Postman: el formato Collection v2.1
+
+**Qué es.** Postman guarda una colección como un JSON con un esquema público
+("Collection v2.1"). Si Kraken lee y escribe ese mismo JSON, puedes pasar
+colecciones entre Postman, la app y tus compañeros sin copiar a mano.
+
+**La forma del archivo (lo importante):**
+
+```json
+{
+  "info": {"name": "Mi API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+  "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{token}}"}]},
+  "variable": [{"key": "base", "value": "http://localhost:8069"}],
+  "item": [
+    {"name": "Usuarios", "item": [                       <- carpeta (tiene "item")
+      {"name": "Listar", "request": {                    <- petición (tiene "request")
+        "method": "GET",
+        "url": {"raw": "{{base}}/api/users?page=2", "query": [{"key": "page", "value": "2"}]},
+        "header": [{"key": "Accept", "value": "application/json", "disabled": true}]}}]}]
+}
+```
+
+**Recorrerlo: recursión.** `walk(items, ruta, auth)` se llama a sí misma por
+cada carpeta, cargando el camino (`["Usuarios", "Admin"]`) y la auth que se
+hereda. Kraken no tiene carpetas dentro de colecciones, así que el camino va en
+el nombre con `" / "`; al exportar, `split(" / ")` las vuelve a armar.
+
+**La URL viene dos veces** (`raw` y `query`): se toma `raw` sin lo que va
+después de `?` y los params de `query`, que trae los desactivados (`raw` no).
+Así no se duplican. Al exportar se escriben las dos.
+
+**Lo que no se puede** se cuenta y se avisa: los scripts (JavaScript que
+Postman corre antes y después) y los archivos de form-data.
+
+**Archivos raros:** Postman en Windows puede guardar en UTF-16 o con BOM
+(`\ufeff` al inicio): se detecta por los primeros bytes antes de leer el JSON.
+
+**Ida y vuelta.** La prueba exporta una colección, la vuelve a importar y
+compara campo por campo. Si algo se perdiera al exportar, ahí truena.
+
+**Dónde.** `modulos/kraken/http/postman.py` (`import_file`, `export_collection`,
+`export_environment`), `views/inicio.py` y `views/entornos.py`.
+
+
+## 53. Variables de colores y autocompletar: cursor y TextSpan
+
+**Pintar por pedazos: `TextSpan`.** Un `ft.Text` puede llevar `spans`: cada
+pedazo con su propio estilo. `split_variables()` parte el texto con la misma
+expresión regular que reemplaza las variables (`VARIABLE`) y cada `{{nombre}}`
+se pinta azul (existe) o rojo subrayado (no existe):
+
+```python
+ft.Text(spans=[ft.TextSpan("{{base}}", style=ft.TextStyle(color=ft.Colors.BLUE)),
+               ft.TextSpan("/api/users", style=ft.TextStyle(color=ft.Colors.OUTLINE))])
+```
+
+Un `TextField` NO acepta spans (su texto es de un solo estilo), por eso la
+línea de colores va debajo del campo.
+
+**¿Dónde está el cursor? `selection`.** En Flet 1.0 el campo sabe su cursor:
+`campo.selection.extent_offset` (y avisa con `on_selection_change`). Con eso,
+`variable_at_cursor()` mira lo que hay ANTES del cursor: si lo último es `{{`
+seguido de letras sin cerrar, estás escribiendo una variable.
+
+**Completar** = reemplazar `{{to` por `{{token}}` (quitando `}}` si ya estaban
+después del cursor) y mover el cursor al final con
+`campo.selection = ft.TextSelection(base_offset=n, extent_offset=n)`; el campo
+debe tener el foco antes (`await campo.focus()`).
+
+**Avisar al editor.** Escribir en `campo.value` desde código NO dispara
+`on_change`; por eso, tras completar, se llama a mano con un evento falso
+(`SimpleNamespace(control=campo, data=texto)`): el editor marca "sin guardar"
+y recalcula las variables faltantes como si lo hubieras tecleado.
+
+**Dónde.** `modulos/kraken/http/services.py` (`split_variables`,
+`variable_at_cursor`, `suggest_variables`, `insert_variable`),
+`views/variables.py` (`VariableAssist`), `comun.py` (`KeyValueEditor(asistente=…)`).
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1383,3 +1464,5 @@ servidor. La salida llega en pedazos desde un hilo y la pantalla se pinta cada
 | 2026-10-14 | 1.6.0 | 43–45 (sockets, ping sin root, puertos en paralelo, dispositivos; DNS, certificados, Whois, WoL; servidores falsos) |
 | 2026-10-15 | 1.7.0 | 46–47 (SSH con paramiko, huella del servidor, sudo -S; panel en vivo con /proc) |
 | 2026-10-15 | 1.8.0 | 48–51 (DB-API para tres motores, solo lectura del lado del servidor, túnel SSH, consola SSH) |
+| 2026-10-15 | 1.8.1 | 52 (Postman Collection v2.1: importar, exportar, ida y vuelta) |
+| 2026-10-15 | 1.8.2 | 53 (variables de colores con TextSpan y autocompletar con el cursor) |

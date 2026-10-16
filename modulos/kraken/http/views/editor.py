@@ -34,6 +34,7 @@ from modulos.kraken import routes
 from modulos.kraken.comun import (MONO, KeyValueEditor, ask_text, copy_text, status_chip,
                                   tabs_row)
 from modulos.kraken.http import services
+from modulos.kraken.http.views.variables import VariableAssist
 from modulos.kraken.models import (AUTH_SELECTION, BODY_SELECTION, METODOS, Ajustes,
                                    Coleccion, Entorno, HistorialHttp, Peticion)
 
@@ -59,6 +60,10 @@ class RequestEditor:
         self.crudo = False   # respuesta JSON: bonita (False) o tal cual (True)
         self.activo = False  # ¿hay una petición abierta? (si se recarga la app, no)
 
+        # {{variables}}: azul si existen, rojo si no, y autocompletar al escribir {{
+        self.asistente = VariableAssist(page, lambda: self._vars,
+                                        on_edit_vars=lambda: page.navigate(routes.ENTORNOS))
+
         # --- Arriba: entorno, método, URL, Enviar ---
         self.dd_entorno = ft.Dropdown(label="Entorno", dense=True, expand=True,
                                       on_select=self._on_environment)
@@ -79,9 +84,12 @@ class RequestEditor:
 
         # --- Secciones de la petición ---
         self.fila_secciones = ft.Container()
-        self.kv_params = KeyValueEditor(page, self._changed, "Parámetro", "Valor")
-        self.kv_headers = KeyValueEditor(page, self._changed, "Header", "Valor")
-        self.kv_form = KeyValueEditor(page, self._changed, "Campo", "Valor")
+        self.kv_params = KeyValueEditor(page, self._changed, "Parámetro", "Valor",
+                                        asistente=self.asistente, grupo="params")
+        self.kv_headers = KeyValueEditor(page, self._changed, "Header", "Valor",
+                                         asistente=self.asistente, grupo="headers")
+        self.kv_form = KeyValueEditor(page, self._changed, "Campo", "Valor",
+                                      asistente=self.asistente, grupo="form")
         self.fila_body_tipo = ft.Container()
         self.txt_body = ft.TextField(
             multiline=True, min_lines=8, max_lines=24, dense=True,
@@ -99,6 +107,11 @@ class RequestEditor:
                                            on_change=lambda e: self._set("auth_clave",
                                                                          e.control.value))
         self.seccion_ctrl = ft.Container()
+        # los mismos campos, con su línea de colores y sugerencias debajo
+        self.url_ctrl = self.asistente.attach(self.txt_url, "url")
+        self.body_ctrl = self.asistente.attach(self.txt_body, "body", lista=True)
+        self.auth_usuario_ctrl = self.asistente.attach(self.txt_auth_usuario, "auth")
+        self.auth_clave_ctrl = self.asistente.attach(self.txt_auth_clave, "auth")
 
         # --- Respuesta ---
         self.respuesta = ft.Column(spacing=8)
@@ -116,8 +129,8 @@ class RequestEditor:
                 ft.Row([self.dd_entorno,
                         ft.IconButton(ft.Icons.DATA_OBJECT, tooltip="Editar variables",
                                       on_click=lambda e: page.navigate(routes.ENTORNOS))]),
-                ft.Row([self.dd_metodo, self.txt_url],
-                       vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([self.dd_metodo, self.url_ctrl],
+                       vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Row([self.btn_enviar, self.btn_cancelar]),
                 self.lbl_faltan,
                 self.fila_secciones,
@@ -192,6 +205,7 @@ class RequestEditor:
         self.kv_form.load(b.form)
 
     def _render_all(self):  # propio
+        self.asistente.refresh()
         self._render_title()
         self._render_menu()
         self._render_sections()
@@ -263,7 +277,7 @@ class RequestEditor:
                                        if b.body_tipo == "json" else "Texto libre")
             self.btn_formatear.visible = b.body_tipo == "json"
             extra = ft.Column(spacing=2, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                              controls=[self.txt_body,
+                              controls=[self.body_ctrl,
                                         ft.Row([self.btn_formatear])])
         return ft.Column(spacing=8, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                          controls=[self.fila_body_tipo, extra])
@@ -273,12 +287,12 @@ class RequestEditor:
         controles: list[ft.Control] = [self.dd_auth]
         if tipo == "bearer":
             self.txt_auth_usuario.label = "Token"
-            controles.append(self.txt_auth_usuario)
+            controles.append(self.auth_usuario_ctrl)
             controles.append(ft.Text("Se manda como  Authorization: Bearer <token>. "
                                      "Puedes usar {{token}}.", size=12, color=ft.Colors.OUTLINE))
         elif tipo == "basic":
             self.txt_auth_usuario.label = "Usuario"
-            controles += [self.txt_auth_usuario, self.txt_auth_clave]
+            controles += [self.auth_usuario_ctrl, self.auth_clave_ctrl]
         return ft.Column(spacing=8, controls=controles)
 
     def _render_missing(self):  # propio
@@ -464,12 +478,14 @@ class RequestEditor:
         Ajustes.change(entorno_id=valor or None)
         self._vars = services.variables()
         self._render_missing()
-        self.lbl_faltan.update()
+        self.asistente.refresh()   # lo azul/rojo cambia con el entorno
+        self.page.update()
 
     def reload_environments(self):  # propio
         """Al regresar de la pantalla de Entornos."""
         self._load_environments()
         self._render_missing()
+        self.asistente.refresh()
 
     # ==================================================================
     # Enviar

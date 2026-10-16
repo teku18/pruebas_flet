@@ -105,6 +105,56 @@ def substitute(texto: str | None, valores: dict[str, str]) -> str:  # propio
     return VARIABLE.sub(lambda m: valores.get(m.group(1), m.group(0)), texto)
 
 
+def split_variables(texto: str | None) -> list[tuple[str, str | None]]:  # propio
+    """'{{base}}/users' -> [('{{base}}', 'base'), ('/users', None)] (para pintarlas)."""
+    partes, inicio = [], 0
+    for m in VARIABLE.finditer(texto or ""):
+        if m.start() > inicio:
+            partes.append((texto[inicio:m.start()], None))
+        partes.append((m.group(0), m.group(1)))
+        inicio = m.end()
+    if inicio < len(texto or ""):
+        partes.append((texto[inicio:], None))
+    return partes
+
+
+def variable_at_cursor(texto: str, cursor: int | None) -> tuple[int, str] | None:  # propio
+    """Si estás escribiendo una variable ('…{{ba|'), (posición de las llaves, 'ba')."""
+    texto = texto or ""
+    cursor = len(texto) if cursor is None or not 0 <= cursor <= len(texto) else cursor
+    antes = texto[:cursor]
+    inicio = antes.rfind("{{")
+    if inicio < 0:
+        return None
+    parcial = antes[inicio + 2:]
+    if "}" in parcial or any(c.isspace() for c in parcial) or "{" in parcial:
+        return None
+    return inicio, parcial
+
+
+def suggest_variables(parcial: str, valores: dict[str, str],  # propio
+                      limite: int = 20) -> list[tuple[str, str]]:
+    """Las variables que empiezan con lo escrito primero, luego las que lo contienen."""
+    p = parcial.lower()
+    empiezan = sorted(k for k in valores if k.lower().startswith(p))
+    contienen = sorted(k for k in valores if p in k.lower() and k not in empiezan)
+    return [(k, valores[k]) for k in (empiezan + contienen)[:limite]]
+
+
+def insert_variable(texto: str, inicio: int, cursor: int | None,  # propio
+                    nombre: str) -> tuple[str, int]:
+    """Reemplaza '{{ba' por '{{base}}' (sin duplicar '}}' si ya estaban). -> (texto, cursor)."""
+    texto = texto or ""
+    cursor = len(texto) if cursor is None or not 0 <= cursor <= len(texto) else cursor
+    despues = texto[cursor:]
+    if despues.startswith("}}"):
+        despues = despues[2:]
+    elif despues.startswith("}"):
+        despues = despues[1:]
+    nuevo = texto[:inicio] + "{{" + nombre + "}}"
+    return nuevo + despues, len(nuevo)
+
+
 def missing_variables(b: Borrador, valores: dict[str, str]) -> list[str]:  # propio
     """Variables que usa la petición y no están definidas."""
     textos = [b.url, b.body, b.auth_usuario, b.auth_clave]
