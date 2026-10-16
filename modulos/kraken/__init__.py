@@ -15,6 +15,7 @@ Navegación (encima de la pantalla de inicio):
   /kraken/ssh/panel         -> un servidor en vivo (cada 5 s) + comandos
   /kraken/ssh/logs          -> leer un log del servidor
   /kraken/ssh/consola       -> escribir cualquier comando
+  /kraken/ssh/tuneles       -> exponer puertos (ngrok / Cloudflare)
   /kraken/webhooks          -> tus receptores de webhooks
   /kraken/webhooks/receptor -> un receptor: URL y lo recibido (lee cada 5 s)
 
@@ -25,6 +26,7 @@ Capas (cada herramienta en su carpeta, para sumar Red, SSH y Webhooks):
   red/             un archivo por prueba (ping.py, puertos.py…) + views/
   ssh/             conexion.py (paramiko), metricas.py, acciones.py + views/
   webhooks/        receptor.py (lo que corre en tu servidor), servicio.py + views/
+  tuneles/         servicio.py (ngrok / cloudflared por SSH) + views/
   herramientas.py  las tarjetas del inicio
   comun.py         piezas de pantalla compartidas
 """
@@ -46,6 +48,7 @@ class KrakenModule(AppModule):
         from modulos.kraken.red.views import NetworkHistoryView, NetworkHome, TestView
         from modulos.kraken.sqlite.views import DatabaseView, DatabasesView
         from modulos.kraken.ssh.views import ConsoleView, LogsView, PanelView, ServersView
+        from modulos.kraken.tuneles.views import TunnelsView
         from modulos.kraken.views import KrakenHome
         from modulos.kraken.webhooks.views import ReceiversView, ReceiverView
 
@@ -65,7 +68,9 @@ class KrakenModule(AppModule):
         # SSH: servidores --tocar--> panel (cada 5 s) --Logs/Consola--> encima del panel
         self.logs = LogsView(page)
         self.consola = ConsoleView(page)
-        self.panel = PanelView(page, on_logs=self.logs.open, on_console=self.consola.open)
+        self.tuneles = TunnelsView(page)
+        self.panel = PanelView(page, on_logs=self.logs.open, on_console=self.consola.open,
+                               on_expose=self.tuneles.open)
         self.servidores = ServersView(page, on_open=self.panel.open)
         # Webhooks: receptores --tocar--> uno (lee cada 5 s) --webhook--> Cliente HTTP
         self.receptor = ReceiverView(page, on_to_http=lambda b: self.editor.open_new(borrador=b),
@@ -109,7 +114,8 @@ class KrakenModule(AppModule):
                 self.red.load()
         elif route.startswith(routes.SSH):
             vistas.append(self.servidores.vista)
-            if route in (routes.SSH_PANEL, routes.SSH_LOGS, routes.SSH_CONSOLA) and self.panel.activo:
+            if route in (routes.SSH_PANEL, routes.SSH_LOGS, routes.SSH_CONSOLA,
+                         routes.SSH_TUNELES) and self.panel.activo:
                 vistas.append(self.panel.vista)
                 if route == routes.SSH_PANEL:
                     self.panel.wake()
@@ -117,6 +123,9 @@ class KrakenModule(AppModule):
                 vistas.append(self.logs.vista)
             elif route == routes.SSH_CONSOLA and self.consola.activo:
                 vistas.append(self.consola.vista)
+            elif route == routes.SSH_TUNELES:
+                self.tuneles.load()
+                vistas.append(self.tuneles.vista)
             elif route != routes.SSH_PANEL or not self.panel.activo:
                 if route != routes.SSH:  # se recargó la app: no hay servidor abierto
                     self.page.route = routes.SSH
@@ -160,6 +169,8 @@ class KrakenModule(AppModule):
         elif route == routes.WEBHOOK:
             self.receptor.close()  # deja de preguntar al servidor
             self.page.navigate(routes.WEBHOOKS)
+        elif route == routes.SSH_TUNELES:
+            self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)
         elif route == routes.SSH_CONSOLA:
             self.consola.close()
             self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)

@@ -23,11 +23,16 @@ import httpx
 from sqlalchemy import delete, select
 
 from core.database import SessionLocal
-from modulos.kraken.models import Equipo, Receptor, WebhookRecibido
+from modulos.kraken.models import Equipo, Receptor, TunelPublico, WebhookRecibido
 from modulos.kraken.ssh.conexion import Sesion
 from modulos.kraken.webhooks.receptor import LEER, SCRIPT
 
+# ¿sigue vivo ese pid? (un proceso muerto sin recoger, "zombi", no cuenta)
+VIVO = ('vivo() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null && '
+        '[ "$(cut -d" " -f3 /proc/"$1"/stat 2>/dev/null || echo R)" != Z ]; }; ')
+
 LOTE = 300     # cuántos se piden por vuelta al leer
+VENTANA = 100  # con reenvío: se vuelve a mirar los últimos 100 (sus respuestas llegan después)
 
 
 @dataclass
@@ -54,6 +59,7 @@ def _tag(r: Receptor) -> str:  # propio
 def _config(r: Receptor) -> dict:  # propio
     return {"puerto": r.puerto, "clave": r.clave, "status": r.status,
             "cuerpo": r.respuesta or "", "max": max(r.max_guardados * 2, 200),
+            "reenviar": [u for u in (r.reenviar or []) if u.strip()],
             "tipo": "application/json" if (r.respuesta or "").lstrip()[:1] in "{[" else
             "text/plain; charset=utf-8"}
 
@@ -109,8 +115,8 @@ def _cron(sesion: Sesion, r: Receptor, agregar: bool) -> bool:  # propio
 def status(sesion: Sesion, r: Receptor) -> Estado:  # propio
     d = _dir(r)
     s = sesion.run(
-        f"cd {d} 2>/dev/null || {{ echo NOINSTALADO; exit 0; }}; "
-        "if [ -f receptor.pid ] && kill -0 \"$(cat receptor.pid)\" 2>/dev/null; "
+        VIVO + f"cd {d} 2>/dev/null || {{ echo NOINSTALADO; exit 0; }}; "
+        "if [ -f receptor.pid ] && vivo \"$(cat receptor.pid)\"; "
         "then echo ACTIVO; else echo DETENIDO; tail -n 5 receptor.log 2>/dev/null; fi",
         timeout=15)
     primera, _, resto = s.texto.partition("\n")
@@ -123,7 +129,7 @@ def status(sesion: Sesion, r: Receptor) -> Estado:  # propio
 def start(sesion: Sesion, r: Receptor) -> Estado:  # propio
     d = _dir(r)
     sesion.run(
-        f"cd {d} && if [ -f receptor.pid ] && kill -0 \"$(cat receptor.pid)\" 2>/dev/null; "
+        VIVO + f"cd {d} && if [ -f receptor.pid ] && vivo \"$(cat receptor.pid)\"; "
         "then :; else rm -f receptor.pid; "
         "(setsid nohup python3 receptor.py </dev/null >>receptor.log 2>&1 &) ; sleep 1.2; fi",
         timeout=20)
@@ -180,37 +186,57 @@ def _local_time(texto: str) -> datetime:  # propio
 
 
 def fetch(sesion: Sesion, r: Receptor) -> int:  # propio
-    """Trae lo nuevo a la BD. Devuelve cuántos llegaron."""
+    """
+    Trae lo nuevo a la BD. Devuelve cuántos webhooks llegaron.
+
+    Con reenvío, lo que contestó cada destino llega DESPUÉS en un renglón
+    "actualiza" con el id del webhook; por eso se pide desde un poco antes
+    del último (VENTANA) y se juntan, sin repetir los que ya estaban.
+    """
     archivo = f'"$HOME"/{shlex.quote(r.carpeta)}/recibidos.jsonl'
-    desde, total = r.ultimo_id, 0
+    desde = max(0, r.ultimo_id - (VENTANA if r.reenviar else 0))
+    ultimo, total = r.ultimo_id, 0
     for _ in range(10):          # hasta 3,000 de una vez
         s = sesion.run(f"python3 -c {shlex.quote(LEER)} {int(desde)} {LOTE} {archivo}",
                        timeout=30, max_bytes=20_000_000)
-        renglones = [x for x in s.texto.splitlines() if x.strip()]
-        nuevos = []
-        for renglon in renglones:
+        renglones = []
+        for renglon in s.texto.splitlines():
             try:
-                d = json.loads(renglon)
+                renglones.append(json.loads(renglon))
             except ValueError:
                 continue
-            nuevos.append(WebhookRecibido(
-                receptor_id=r.id, remoto_id=int(d["id"]), recibido_en=_local_time(d.get("fecha")),
-                metodo=str(d.get("metodo", "?"))[:10], ruta=d.get("ruta") or "/",
-                query=d.get("query") or None, headers=d.get("headers") or [],
-                body=d.get("body") or None, es_base64=bool(d.get("base64")),
-                tamano=int(d.get("tamano") or 0), ip=(d.get("ip") or "")[:64] or None))
-        if not nuevos:
+        if not renglones:
             break
         with SessionLocal() as session:
-            session.add_all(nuevos)
+            ids = {d["id"] for d in renglones if "id" in d}
+            existentes = {w.remoto_id: w for w in session.scalars(select(WebhookRecibido).where(
+                WebhookRecibido.receptor_id == r.id, WebhookRecibido.remoto_id.in_(ids)))}
+            for d in renglones:
+                numero = int(d.get("id", 0))
+                if d.get("actualiza"):
+                    if numero in existentes:
+                        existentes[numero].reenvios = d.get("reenvios") or []
+                    continue
+                if numero in existentes:
+                    continue
+                w = WebhookRecibido(
+                    receptor_id=r.id, remoto_id=numero, recibido_en=_local_time(d.get("fecha")),
+                    metodo=str(d.get("metodo", "?"))[:10], ruta=d.get("ruta") or "/",
+                    query=d.get("query") or None, headers=d.get("headers") or [],
+                    body=d.get("body") or None, es_base64=bool(d.get("base64")),
+                    tamano=int(d.get("tamano") or 0), ip=(d.get("ip") or "")[:64] or None,
+                    reenvios=d.get("reenvios"))
+                session.add(w)
+                existentes[numero] = w
+                ultimo = max(ultimo, numero)
+                total += 1
             session.commit()
-        desde = max(w.remoto_id for w in nuevos)
-        total += len(nuevos)
+        desde = max(d.get("id", 0) for d in renglones)
         if len(renglones) < LOTE:
             break
-    if desde != r.ultimo_id:
-        Receptor.update(r.id, ultimo_id=desde)
-        r.ultimo_id = desde
+    if ultimo != r.ultimo_id:
+        Receptor.update(r.id, ultimo_id=ultimo)
+        r.ultimo_id = ultimo
     prune(r)
     return total
 
@@ -244,16 +270,27 @@ def clear(r: Receptor) -> None:  # propio
 # ============================================================================
 # Desde el celular
 # ============================================================================
-def test_send(r: Receptor, host: str) -> tuple[bool, str]:  # propio
-    """Manda un webhook de prueba a la URL pública (como lo haría Stripe, GitHub…)."""
-    url = r.url(host) + "/prueba"
+def public_url(r: Receptor) -> str | None:  # propio
+    """La URL que se pega en el proveedor: la del túnel https si hay, si no IP:puerto."""
+    t = TunelPublico.of_receiver(r.id)
+    if t is not None and t.url:
+        return f"{t.url.rstrip('/')}/{r.clave}"
+    host = host_of(r)
+    return r.url(host) if host else None
+
+
+def test_send(r: Receptor, destino: str) -> tuple[bool, str]:  # propio
+    """Manda un webhook de prueba a la URL pública (como lo haría Stripe, GitHub…).
+    `destino`: la URL pública completa, o solo el host (URL directa)."""
+    host = destino.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    url = (destino if destino.startswith("http") else r.url(destino)) + "/prueba"
     try:
         resp = httpx.post(url, json={"evento": "prueba", "desde": "ControlKraken",
                                      "hora": datetime.now().isoformat(timespec="seconds")},
                           timeout=10)
     except httpx.ConnectTimeout:
         return False, (f"No se alcanza {host}:{r.puerto} desde aquí: el firewall lo bloquea. "
-                       "Toca «Abrir puerto» (ufw) o ábrelo en tu proveedor.")
+                       "Toca «Abrir puerto» (ufw), ábrelo en tu proveedor o usa un túnel.")
     except httpx.ConnectError:
         return False, (f"{host}:{r.puerto} rechaza la conexión: ¿el receptor está detenido? "
                        "(o el puerto está cerrado)")
@@ -261,6 +298,9 @@ def test_send(r: Receptor, host: str) -> tuple[bool, str]:  # propio
         return False, f"No se pudo: {ex}"
     if resp.status_code == r.status:
         return True, f"Llegó: el receptor respondió {resp.status_code}."
+    if resp.status_code in (502, 503, 504) or "ngrok" in resp.text[:2000].lower():
+        return False, (f"El túnel respondió {resp.status_code}: está abierto pero el receptor "
+                       "no contesta (¿detenido?).")
     return False, f"Respondió {resp.status_code}: ¿es otro programa el que usa ese puerto?"
 
 

@@ -11,7 +11,7 @@ Panel de un servidor (/kraken/ssh/panel): se actualiza cada 5 s MIENTRAS lo ves.
   Red      bajada 1.2 MB/s · subida 80 KB/s
   Servicios (odoo: activo) (postgresql: activo) (nginx: apagado)
   Procesos que más consumen…
-  [▶ Comandos]  [Consola]  [📄 Logs]
+  [▶ Comandos]  [Consola]  [📄 Logs]  [Exponer puerto]
 
 "Mientras lo ves" de verdad:
   - al salir de la pantalla, el ciclo se detiene y se cierra la conexión
@@ -77,9 +77,10 @@ class _Vistazo:
 
 
 class PanelView:
-    def __init__(self, page: ft.Page, on_logs, on_console):
-        """on_logs(equipo) / on_console(equipo): abren Logs y Consola encima del panel."""
+    def __init__(self, page: ft.Page, on_logs, on_console, on_expose=None):
+        """on_logs / on_console / on_expose(equipo): abren Logs, Consola y Exponer puerto."""
         self.page = page
+        self.on_expose = on_expose
         self.on_logs = on_logs
         self.on_console = on_console
         self.equipo: Equipo | None = None
@@ -395,6 +396,9 @@ class PanelView:
                                  on_click=lambda e: self.on_console(self.equipo)),
             ft.OutlinedButton("Logs", icon=ft.Icons.ARTICLE,
                               on_click=lambda e: self.on_logs(self.equipo)),
+            *([ft.OutlinedButton("Exponer puerto", icon=ft.Icons.PUBLIC,
+                                 on_click=lambda e: self.on_expose(self.equipo))]
+              if self.on_expose else []),
         ])
 
     def open_commands(self, e=None):  # propio

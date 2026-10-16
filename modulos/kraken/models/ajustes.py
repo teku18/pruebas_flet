@@ -8,8 +8,9 @@ el respaldo (a diferencia de la carpeta de respaldos, que es de cada equipo).
   entorno_id         el entorno elegido ({{variables}})
   dns_servidor       a quién le pregunta la herramienta DNS (Cloudflare por defecto)
   red_historial_max  cuántas pruebas de Red se guardan            (0 = sin límite)
+  ngrok_token        tu authtoken de ngrok (texto normal, como todo Kraken)
 """
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.database import Base, SessionLocal
@@ -36,6 +37,7 @@ class Ajustes(CrudMixin, Base):
     dns_servidor: Mapped[str] = mapped_column(String(100), nullable=False,
                                               default=DNS_POR_DEFECTO)
     red_historial_max: Mapped[int] = mapped_column(Integer, nullable=False, default=200)
+    ngrok_token: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @classmethod
     def current(cls) -> "Ajustes":  # propio

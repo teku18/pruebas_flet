@@ -1,7 +1,7 @@
 """
 Webhooks: receptores en tus servidores y lo que les llega.
 
-  Receptor  1 ──< N  WebhookRecibido
+  Receptor  1 ──< N  WebhookRecibido      Receptor 1 ── 0..1 TunelPublico (URL https)
   (en un equipo SSH:          (copia local de cada webhook: método, headers,
    puerto + clave secreta)     body… se guarda y se respalda como todo Kraken)
 
@@ -41,6 +41,7 @@ class Receptor(CrudMixin, Base):
     respuesta: Mapped[str | None] = mapped_column(Text, nullable=True,
                                                   default=RESPUESTA_POR_DEFECTO)
     max_guardados: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
+    reenviar: Mapped[list | None] = mapped_column(JSON, nullable=True)   # ["https://…", …]
     ultimo_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     instalado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now)
@@ -102,6 +103,8 @@ class WebhookRecibido(CrudMixin, Base):
     tamano: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     visto: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # [{"url", "status", "ms", "error", "respuesta"}] (lo que contestó cada destino)
+    reenvios: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     @classmethod
     def of(cls, receptor_id: int, limite: int = 500) -> list["WebhookRecibido"]:  # propio

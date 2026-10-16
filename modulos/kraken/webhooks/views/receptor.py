@@ -2,7 +2,8 @@
 Un receptor (/kraken/webhooks/receptor): su URL y lo que le llega.
 
   ← Stripe pruebas                                   ● Escuchando        [⋮]
-  http://201.1.2.3:9555/kq3…Xb                                   [copiar]
+  URL pública: (Directa) (ngrok) (Cloudflare)       <- túnel https sin abrir puertos
+  https://a1b2.ngrok-free.app/kq3…Xb                             [copiar]
   [Detener] [Probar]
   POST  /pagos?x=1          14:32:05 · 1.2 KB · 54.187.1.2     (●  = nuevo)
   POST  /                   14:30:11 · 312 B  · 54.187.1.2
@@ -24,8 +25,11 @@ from core.storage import human_size
 from core.ui import confirm, notify
 from modulos.kraken import routes
 from modulos.kraken.comun import MONO, copy_text, method_badge
-from modulos.kraken.models import Equipo, Receptor, WebhookRecibido
+from modulos.kraken.models import Equipo, Receptor, TunelPublico, WebhookRecibido
+from modulos.kraken.models.tuneles import SERVICIOS
 from modulos.kraken.ssh.conexion import HuellaCambio, Sesion, friendly
+from modulos.kraken.tuneles import servicio as tuneles
+from modulos.kraken.tuneles.views import ensure_ready
 from modulos.kraken.webhooks import servicio
 from modulos.kraken.webhooks.views.lista import receiver_dialog
 
@@ -41,6 +45,8 @@ class ReceiverView:
         self.r: Receptor | None = None
         self.sesion: Sesion | None = None
         self.estado: servicio.Estado | None = None
+        self.tunel: tuneles.Estado | None = None   # el túnel https (si tiene)
+        self.error_tunel: str | None = None        # no se borra con la lectura de cada 5 s
         self.error: str | None = None
         self.activo = False
         self.pausado = False
@@ -72,7 +78,7 @@ class ReceiverView:
     def open(self, r: Receptor):  # propio
         self.close()
         self.r = Receptor.get(r.id)
-        self.estado, self.error = None, None
+        self.estado, self.error, self.tunel, self.error_tunel = None, None, None, None
         self.activo, self.pausado = True, False
         self.vistos_al_abrir = {w.id for w in WebhookRecibido.of(self.r.id) if w.visto}
         self._lifecycle_anterior = self.page.on_app_lifecycle_state_change
@@ -141,8 +147,9 @@ class ReceiverView:
                 sesion = self._connected()
                 estado = servicio.status(sesion, self.r)
                 nuevos = servicio.fetch(sesion, self.r) if estado.instalado else 0
-                return estado, nuevos
-            self.estado, nuevos = await asyncio.to_thread(leer)
+                t = TunelPublico.of_receiver(self.r.id)
+                return estado, nuevos, (tuneles.status(sesion, t) if t else None)
+            self.estado, nuevos, self.tunel = await asyncio.to_thread(leer)
             self.error = None
         except HuellaCambio:
             self.error = "La huella del servidor cambió: ábrelo en SSH para revisarla."
@@ -193,7 +200,23 @@ class ReceiverView:
             ft.PopupMenuItem(content=ft.Text("Eliminar"), icon=ft.Icons.DELETE,
                              on_click=lambda e: self.confirm_delete()),
         ]
-        url = r.url(host)
+        t = TunelPublico.of_receiver(r.id)
+        url = servicio.public_url(r) or r.url(host)
+        modo = t.servicio if t else "directa"
+        opciones = {"directa": "Directa (IP)", **SERVICIOS}
+        fila_modo = ft.Row(wrap=True, spacing=6, controls=[
+            ft.Text("URL pública:", size=12),
+            *[ft.Chip(label=ft.Text(n, size=12), selected=modo == k, show_checkmark=False,
+                      disabled=self.ocupado,
+                      on_select=lambda e, k=k: self.page.run_task(self.set_public, k))
+              for k, n in opciones.items()]])
+        aviso_tunel = None
+        if t and self.error_tunel:
+            aviso_tunel = self.error_tunel
+        elif t and not t.url:
+            aviso_tunel = "El túnel aún no tiene URL: toca «Abrir túnel»."
+        elif t and self.tunel is not None and not self.tunel.activo:
+            aviso_tunel = (self.tunel.error or "El túnel está cerrado: esa URL no responde.")
         botones: list[ft.Control] = []
         instalado = self.estado.instalado if self.estado else r.instalado
         if self.estado is not None and not instalado:
@@ -209,7 +232,16 @@ class ReceiverView:
                                            on_click=lambda e: self.page.run_task(self.start)))
         botones.append(ft.OutlinedButton("Probar", icon=ft.Icons.SEND, disabled=self.ocupado,
                                          on_click=lambda e: self.page.run_task(self.test)))
+        if aviso_tunel:
+            botones.append(ft.FilledTonalButton(
+                "Abrir túnel", icon=ft.Icons.PUBLIC, disabled=self.ocupado,
+                on_click=lambda e: self.page.run_task(self.set_public, modo)))
+        if r.reenviar:
+            botones.append(ft.Text("Reenvía a " + ", ".join(
+                u.split("://", 1)[-1].split("/", 1)[0] for u in r.reenviar), size=12,
+                color=ft.Colors.OUTLINE))
         controles: list[ft.Control] = [
+            fila_modo,
             ft.Container(
                 padding=10, border_radius=8, bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 content=ft.Row(spacing=4, controls=[
@@ -219,6 +251,8 @@ class ReceiverView:
                                                                         "URL copiada"))])),
             ft.Row(wrap=True, spacing=8, controls=botones),
         ]
+        if aviso_tunel:
+            controles.append(ft.Text(aviso_tunel, color=ft.Colors.ORANGE, size=12))
         if self.ocupado:
             controles.append(ft.ProgressBar())
         if self.error:
@@ -262,6 +296,7 @@ class ReceiverView:
                             weight=ft.FontWeight.BOLD if nuevo else None),
                     ft.Text(f"{cuando} · {human_size(w.tamano)} · {w.ip or '?'}", size=11,
                             color=ft.Colors.OUTLINE)]),
+                *_forward_icon(w),
                 *([ft.Icon(ft.Icons.CIRCLE, size=8, color=ft.Colors.PINK)] if nuevo else []),
             ]))
 
@@ -309,12 +344,12 @@ class ReceiverView:
         await self._action(servicio.open_port, "ok")
 
     async def test(self):  # propio
-        host = servicio.host_of(self.r)
-        if not host:
+        destino = servicio.public_url(self.r)
+        if not destino:
             return
         self.ocupado = True
         self._paint(lista=False)
-        ok, texto = await asyncio.to_thread(servicio.test_send, self.r, host)
+        ok, texto = await asyncio.to_thread(servicio.test_send, self.r, destino)
         self.ocupado = False
         notify(self.page, texto)
         if ok:
@@ -322,12 +357,57 @@ class ReceiverView:
         else:
             self._paint(lista=False)
 
+    async def set_public(self, modo: str):  # propio
+        """Directa (IP:puerto) o un túnel https de ngrok / Cloudflare hacia el receptor."""
+        if self.ocupado:
+            return
+        e = Equipo.get(self.r.equipo_id) if self.r.equipo_id else None
+        if e is None:
+            return
+        actual = TunelPublico.of_receiver(self.r.id)
+        self.ocupado = True
+        self._paint(lista=False)
+        try:
+            if actual and actual.servicio != modo:   # cambiar de servicio: cerrar el anterior
+                await asyncio.to_thread(lambda: tuneles.remove(self._connected(), actual))
+                actual, self.tunel = None, None
+            self.error_tunel = None
+            if modo == "directa":
+                notify(self.page, "URL directa (IP:puerto): el puerto debe estar abierto")
+                return
+            if actual is None:
+                actual = TunelPublico.create(nombre=f"Webhooks · {self.r.nombre}"[:80],
+                                             equipo_id=e.id, puerto=self.r.puerto,
+                                             servicio=modo, receptor_id=self.r.id)
+            t = actual
+
+            def abrir():  # propio
+                return tuneles.start(self._connected(), TunelPublico.get(t.id))
+            estado = await ensure_ready(self.page, abrir, e, modo,
+                                        lambda: self.page.run_task(self.set_public, modo))
+            if estado is not None:
+                self.tunel = estado
+                notify(self.page, "Túnel abierto: copia la URL https y pégala en el proveedor")
+            self.error = None
+        except ValueError as ex:
+            self.error_tunel = str(ex)
+        except Exception as ex:  # noqa: BLE001
+            self.error_tunel = friendly(ex, e)
+            self.sesion = None
+        finally:
+            self.ocupado = False
+            self._paint(lista=False)
+
     def edit(self):  # propio
-        anterior = (self.r.puerto, self.r.status, self.r.respuesta, self.r.max_guardados)
+        anterior = (self.r.puerto, self.r.status, self.r.respuesta, self.r.max_guardados,
+                    self.r.reenviar)
 
         def guardado(r: Receptor):  # propio
             self.r = r
-            cambio = (r.puerto, r.status, r.respuesta, r.max_guardados) != anterior
+            t = TunelPublico.of_receiver(r.id)
+            if t and t.puerto != r.puerto:
+                TunelPublico.update(t.id, puerto=r.puerto)
+            cambio = (r.puerto, r.status, r.respuesta, r.max_guardados, r.reenviar) != anterior
             if cambio and r.instalado:
                 self.page.run_task(self._action, servicio.apply, "Receptor actualizado")
             else:
@@ -344,7 +424,7 @@ class ReceiverView:
 
     def confirm_uninstall(self):  # propio
         def ok():  # propio
-            self.page.run_task(self._action, servicio.uninstall, "Desinstalado del servidor")
+            self.page.run_task(self._action, _uninstall_all, "Desinstalado del servidor")
         confirm(self.page, "Desinstalar del servidor",
                 f"Se detiene el receptor y se borra ~/{self.r.carpeta} del servidor. Lo que ya "
                 "tienes en la app se queda.", ok, boton="Desinstalar")
@@ -352,11 +432,14 @@ class ReceiverView:
     def confirm_delete(self):  # propio
         def ok():  # propio
             async def borrar():  # propio
-                if self.r.instalado:
-                    await self._action(servicio.uninstall)
+                if self.r.instalado or TunelPublico.of_receiver(self.r.id):
+                    await self._action(_uninstall_all)
                     if self.error:
                         notify(self.page, f"No se pudo desinstalar del servidor: {self.error}")
                         return
+                t = TunelPublico.of_receiver(self.r.id)
+                if t:
+                    TunelPublico.delete(t.id)
                 Receptor.delete(self.r.id)
                 notify(self.page, "Receptor eliminado")
                 self.close()
@@ -398,6 +481,7 @@ class ReceiverView:
                             f"desde {w.ip or '?'}", size=12, color=ft.Colors.OUTLINE),
                     *(seccion("Query", w.query) if w.query else []),
                     *seccion("Body", cuerpo),
+                    *_forward_section(w),
                     *seccion(f"Headers ({len(w.headers or [])})", headers)])),
             actions=[
                 ft.TextButton("Copiar body", on_click=lambda e: self.page.run_task(
@@ -406,3 +490,46 @@ class ReceiverView:
                 ft.TextButton("Cerrar", on_click=lambda e: self.page.pop_dialog())],
         ))
 
+
+
+def _uninstall_all(sesion: Sesion, r: Receptor) -> None:  # propio
+    """Desinstala el receptor y cierra su túnel (si tiene)."""
+    t = TunelPublico.of_receiver(r.id)
+    if t is not None:
+        tuneles.stop(sesion, t)
+    servicio.uninstall(sesion, r)
+
+
+def _forward_icon(w: WebhookRecibido) -> list[ft.Control]:  # propio
+    """Un icono por el reenvío: verde todo bien, rojo si algún destino falló, gris esperando."""
+    if not w.reenvios:
+        return []
+    if w.reenvios == "pendiente":
+        return [ft.Icon(ft.Icons.FORWARD, size=16, color=ft.Colors.GREY, tooltip="Reenviando…")]
+    bien = all(200 <= (x.get("status") or 0) < 300 for x in w.reenvios)
+    return [ft.Icon(ft.Icons.FORWARD, size=16, color=ft.Colors.GREEN if bien else ft.Colors.RED,
+                    tooltip="Reenviado" if bien else "Algún destino falló")]
+
+
+def _forward_section(w: WebhookRecibido) -> list[ft.Control]:  # propio
+    """En el detalle: a dónde se reenvió y qué contestó cada destino."""
+    if not w.reenvios:
+        return []
+    if w.reenvios == "pendiente":
+        return [ft.Text("Reenvío: en camino…", size=12, color=ft.Colors.OUTLINE)]
+    filas: list[ft.Control] = [ft.Text("Reenviado a", weight=ft.FontWeight.BOLD, size=13)]
+    for x in w.reenvios:
+        status = x.get("status")
+        bien = status is not None and 200 <= status < 300
+        cabeza = (f"{status} · {x.get('ms', 0)} ms" if status is not None
+                  else f"Sin respuesta · {x.get('error', '')}")
+        filas.append(ft.Container(
+            padding=8, border_radius=6,
+            bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.GREEN if bien else ft.Colors.RED),
+            content=ft.Column(spacing=2, controls=[
+                ft.Text(x.get("url", ""), font_family=MONO, size=11, selectable=True),
+                ft.Text(cabeza, size=12, weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.GREEN if bien else ft.Colors.RED),
+                *([ft.Text(x["respuesta"][:1500], font_family=MONO, size=11, selectable=True)]
+                  if x.get("respuesta") else [])])))
+    return filas

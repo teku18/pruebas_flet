@@ -65,6 +65,7 @@ código** (para que lo abras y lo veas funcionando).
 | 52 | [Postman: el formato Collection v2.1](#52-postman-el-formato-collection-v21) | `modulos/kraken/http/postman.py` |
 | 53 | [Variables de colores y autocompletar: cursor y TextSpan](#53-variables-de-colores-y-autocompletar-cursor-y-textspan) | `modulos/kraken/http/views/variables.py` |
 | 54 | [Webhooks: un receptor que vive en tu servidor](#54-webhooks-un-receptor-que-vive-en-tu-servidor) | `modulos/kraken/webhooks/` |
+| 55 | [Túneles públicos y reenvío: ngrok, Cloudflare y "zombis"](#55-túneles-públicos-y-reenvío-ngrok-cloudflare-y-zombis) | `modulos/kraken/tuneles/`, `webhooks/receptor.py` |
 
 ---
 
@@ -1494,6 +1495,51 @@ quien no la sepa recibe 404. Es HTTP sin cifrar; para HTTPS pon nginx delante
 `servicio.py` (instalar, leer, probar), `views/` (pantallas); migración 0020.
 
 
+## 55. Túneles públicos y reenvío: ngrok, Cloudflare y "zombis"
+
+**Qué hace un túnel.** Tu PC está detrás del módem: desde internet nadie puede
+entrar. ngrok / cloudflared hacen lo contrario: tu PC **sale** hacia sus
+servidores y deja una conexión abierta; lo que llega a `https://xxxx.ngrok-free.app`
+viaja por esa conexión hasta el puerto que dijiste. Por eso no hay que abrir
+puertos ni tener IP pública, y el candado HTTPS lo ponen ellos.
+
+```
+Proveedor ──▶ https://xxxx.ngrok-free.app ──▶ (ngrok, en la nube) ══ túnel ══▶ ngrok en tu PC ──▶ :8069
+```
+
+**Lo que hace la app por SSH** (igual que tú en la terminal):
+
+```bash
+cd ~/.controlkraken/tuneles/<clave>
+(setsid nohup ngrok http 8069 --log stdout --log-format logfmt </dev/null >tunel.log 2>&1 & echo $! > tunel.pid)
+```
+
+y lee `tunel.log` hasta ver `msg="started tunnel" … url=https://…` (Cloudflare
+escribe `https://algo.trycloudflare.com` en su log). Los errores de ngrok traen
+un código (`ERR_NGROK_108` = tu cuenta ya tiene el máximo de túneles a la vez;
+`ERR_NGROK_4018` = falta authtoken) y la app los traduce.
+
+**El authtoken** vive en `~/.config/ngrok/ngrok.yml` del equipo
+(`ngrok config check` dice dónde). Si no está, la app usa el que guardaste y
+corre `ngrok config add-authtoken <token>` una vez.
+
+**"Zombis".** `kill -0 <pid>` responde "vivo" también para un proceso que ya
+terminó pero que nadie ha "recogido" (estado `Z`). Por eso la app revisa el
+estado en `/proc/<pid>/stat` (tercer campo): si es `Z`, cuenta como cerrado.
+
+**Reenvío sin hacer esperar al proveedor.** El receptor contesta primero (los
+proveedores esperan pocos segundos y reintentan si tardas) y LUEGO, en otro
+hilo, manda lo mismo a cada destino con `urllib`. Lo que contestó cada uno se
+anota en un renglón aparte con el mismo id (`"actualiza": true`); por eso la
+app vuelve a mirar los últimos 100 al leer y los junta. Al reenviar se agrega
+`X-Kraken-Reenvio: 1`, y un receptor no reenvía lo que ya trae ese header:
+así no se arma un bucle si apuntas un receptor a otro.
+
+**Dónde.** `modulos/kraken/tuneles/servicio.py` (`start`, `status`, `parse_log`,
+`install`), `views/lista.py` (Exponer puerto, authtoken),
+`webhooks/receptor.py` (`reenviar`), `webhooks/servicio.py` (`fetch`, `public_url`).
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1514,3 +1560,4 @@ quien no la sepa recibe 404. Es HTTP sin cifrar; para HTTPS pon nginx delante
 | 2026-10-15 | 1.8.1 | 52 (Postman Collection v2.1: importar, exportar, ida y vuelta) |
 | 2026-10-15 | 1.8.2 | 53 (variables de colores con TextSpan y autocompletar con el cursor) |
 | 2026-10-15 | 1.9.0 | 54 (webhooks: receptor en tu servidor, setsid/nohup, crontab @reboot) |
+| 2026-10-16 | 1.10.0 | 55 (túneles ngrok/Cloudflare por SSH, procesos zombi, reenvío sin esperar) |

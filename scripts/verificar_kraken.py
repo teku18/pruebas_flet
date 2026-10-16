@@ -787,6 +787,41 @@ exec "$@"
 """
 
 
+# ngrok y cloudflared de prueba: dicen su URL como los de verdad y se quedan vivos
+NGROK_FALSO = r"""#!/bin/bash
+conf="$HOME/.config/ngrok/ngrok.yml"
+case "$1" in
+  config)
+    if [ "$2" = check ]; then
+      if [ -f "$conf" ]; then echo "Valid configuration file at $conf"
+      else echo "ERROR: open $conf: no such file or directory"; exit 1; fi
+    elif [ "$2" = add-authtoken ]; then
+      mkdir -p "$(dirname "$conf")"; echo "authtoken: $3" > "$conf"
+      echo "Authtoken saved to configuration file: $conf"; fi ;;
+  version) echo "ngrok version 3.20.0" ;;
+  http)
+    grep -q authtoken "$conf" 2>/dev/null || {
+      echo 't=1 lvl=eror msg="failed to auth" err="authentication failed: ERR_NGROK_4018"'; exit 1; }
+    lock="$HOME/.ngrok_sesion"
+    if [ -f "$lock" ] && kill -0 "$(cat "$lock")" 2>/dev/null; then
+      echo 't=1 lvl=eror msg="session failed" err="limited to 1 simultaneous session ERR_NGROK_108"'
+      exit 1; fi
+    echo $$ > "$lock"
+    dom="fake-$2.ngrok-free.app"; prev=""
+    for a in "$@"; do [ "$prev" = "--url" ] && dom="${a#https://}"; prev="$a"; done
+    sleep 0.5
+    echo "t=2 lvl=info msg=\"started tunnel\" obj=tunnels name=command_line addr=http://localhost:$2 url=https://$dom"
+    exec sleep 3600 ;;
+esac
+"""
+CLOUDFLARED_FALSO = r"""#!/bin/bash
+[ "$1" = "--version" ] && { echo "cloudflared version 2026.1.0"; exit 0; }
+sleep 0.5
+echo "2026-10-16T06:00:00Z INF |  https://alfa-beta-gama-$RANDOM.trycloudflare.com  |" >&2
+exec sleep 3600
+"""
+
+
 def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
     """Servidor SSH falso: acepta usuario/clave y corre cada comando con bash."""
     import socket
@@ -803,6 +838,10 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
                                      'else cat > "$f"; fi\n')
     (bin_dir / "crontab").chmod(0o755)
     casa = Path(tempfile.mkdtemp(prefix="ck_home_"))   # el HOME del "servidor"
+    (bin_dir / "ngrok").write_text(NGROK_FALSO)
+    (bin_dir / "ngrok").chmod(0o755)
+    (bin_dir / "cloudflared").write_text(CLOUDFLARED_FALSO)
+    (bin_dir / "cloudflared").chmod(0o755)
     llave = paramiko.RSAKey.generate(2048)  # cada servidor falso: su propia llave
 
     class Srv(paramiko.ServerInterface):
@@ -1157,6 +1196,123 @@ def test_webhooks():  # propio
     check(not WebhookRecibido.of(r.id), "borrar el receptor borra lo recibido")
 
 
+def test_tunnels():  # propio
+    """Túneles públicos (ngrok / Cloudflare de prueba) y reenvío de webhooks."""
+    import httpx
+
+    from modulos.kraken.models import Ajustes, Equipo, Receptor, TunelPublico, WebhookRecibido
+    from modulos.kraken.ssh.conexion import Sesion
+    from modulos.kraken.tuneles import servicio as tuneles
+    from modulos.kraken.webhooks import servicio as webhooks
+
+    print("Túneles públicos y reenvío")
+    check(tuneles.arch("x86_64\n") == "amd64" and tuneles.arch("aarch64") == "arm64",
+          "procesador -> descarga correcta (amd64 / arm64)")
+    reales = [
+        ('{"addr":"http://localhost:8069","lvl":"info","msg":"started tunnel","name":"command_line",'
+         '"obj":"tunnels","url":"https://a1b2.ngrok-free.app"}', "https://a1b2.ngrok-free.app"),
+        ('t=2026 lvl=info msg="started tunnel" obj=tunnels name=command_line '
+         'addr=http://localhost:8069 url=https://c3d4.ngrok-free.app', "https://c3d4.ngrok-free.app"),
+    ]
+    check(all(tuneles.parse_log(t, "ngrok") == (u, None) for t, u in reales),
+          "lee la URL del log de ngrok (json y logfmt)")
+    check("máximo" in (tuneles.parse_log('err="ERR_NGROK_108"', "ngrok")[1] or ""),
+          "ERR_NGROK_108 explicado")
+    cf = "2026 INF |  https://kingston-inside-best-graphic.trycloudflare.com   |"
+    check(tuneles.parse_log(cf, "cloudflare")[0] ==
+          "https://kingston-inside-best-graphic.trycloudflare.com", "lee la URL de Cloudflare")
+
+    e = Equipo.create(nombre="PC túneles", host="127.0.0.1", ssh_usuario="edgar",
+                      ssh_puerto=start_ssh(), ssh_clave="secreto")
+    Ajustes.change(ngrok_token=None)
+    t = TunelPublico.create(nombre="Odoo dev", equipo_id=e.id, puerto=8069, servicio="ngrok")
+    with Sesion(e) as ses:
+        try:
+            tuneles.start(ses, t)
+            check(False, "arrancó sin authtoken")
+        except tuneles.FaltaToken:
+            check(True, "sin authtoken en el equipo ni en la app: lo pide")
+        Ajustes.change(ngrok_token="2abcTOKEN")
+        estado = tuneles.start(ses, TunelPublico.get(t.id))
+        check(estado.activo and estado.url == "https://fake-8069.ngrok-free.app"
+              and TunelPublico.get(t.id).url == estado.url, f"ngrok http 8069 -> {estado.url}")
+        check("2abcTOKEN" in ses.run("cat ~/.config/ngrok/ngrok.yml").texto,
+              "el token de la app se le pone al ngrok del equipo")
+        check(tuneles.start(ses, TunelPublico.get(t.id)).url == estado.url,
+              "si ya está abierto, no abre otro")
+        otro = TunelPublico.create(nombre="Otro", equipo_id=e.id, puerto=8070, servicio="ngrok")
+        try:
+            tuneles.start(ses, otro)
+            check(False, "dos ngrok gratis a la vez")
+        except ValueError as ex:
+            check("máximo" in str(ex), f"segundo ngrok: {ex}")
+        check(not tuneles.status(ses, otro).activo, "el que falló no se queda colgado")
+        tuneles.stop(ses, TunelPublico.get(t.id))
+        check(not tuneles.status(ses, TunelPublico.get(t.id)).activo, "cerrar")
+        TunelPublico.update(otro.id, dominio="https://mi-fijo.ngrok-free.app/")
+        check(TunelPublico.get(otro.id).dominio == "mi-fijo.ngrok-free.app", "limpia el dominio fijo")
+        check(tuneles.start(ses, TunelPublico.get(otro.id)).url == "https://mi-fijo.ngrok-free.app",
+              "con dominio fijo (--url)")
+        tuneles.remove(ses, TunelPublico.get(otro.id))
+        check(TunelPublico.get(otro.id) is None, "eliminar: lo cierra y lo borra")
+        c = TunelPublico.create(nombre="Rápido", equipo_id=e.id, puerto=8069, servicio="cloudflare")
+        estado = tuneles.start(ses, c)
+        check(estado.url and estado.url.endswith(".trycloudflare.com"), f"Cloudflare: {estado.url}")
+        tuneles.remove(ses, TunelPublico.get(c.id))
+        tuneles.remove(ses, TunelPublico.get(t.id))
+
+        # ---- Reenvío: cada webhook se manda también a tus URLs ----
+        recibido = []
+
+        class Destino(BaseHTTPRequestHandler):
+            def do_POST(self):  # noqa: N802
+                datos = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                recibido.append((self.path, dict(self.headers), datos))
+                cuerpo = b'{"guardado": 7}'
+                self.send_response(201)
+                self.send_header("Content-Length", str(len(cuerpo)))
+                self.end_headers()
+                self.wfile.write(cuerpo)
+
+            def log_message(self, *a):  # noqa: D102
+                pass
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Destino)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        destino = f"http://127.0.0.1:{srv.server_address[1]}/odoo/webhook"
+        import socket
+        with socket.socket() as s_:
+            s_.bind(("127.0.0.1", 0))
+            cerrado, libre = s_.getsockname()[1], None
+        with socket.socket() as s_:
+            s_.bind(("127.0.0.1", 0))
+            libre = s_.getsockname()[1]
+        r = Receptor.create(nombre="Con reenvío", equipo_id=e.id, puerto=libre,
+                            reenviar=[destino, f"http://127.0.0.1:{cerrado}/nada"])
+        webhooks.install(ses, r)
+        url = r.url("127.0.0.1")
+        resp = httpx.post(url + "/pagos?folio=9", json={"evento": "pago"},
+                          headers={"X-Firma": "f1"})
+        check(resp.status_code == 200, "el proveedor recibe su 200 al instante")
+        time.sleep(2.5)
+        webhooks.fetch(ses, Receptor.get(r.id))
+        w = WebhookRecibido.of(r.id)[0]
+        check(len(recibido) == 1 and recibido[0][0] == "/odoo/webhook?folio=9"
+              and json.loads(recibido[0][2]) == {"evento": "pago"}
+              and recibido[0][1].get("X-Firma") == "f1"
+              and recibido[0][1].get("X-Kraken-Reenvio") == "1",
+              "llega igual al destino (body, headers, query)")
+        ok, malo = (w.reenvios or [{}, {}])[:2]
+        check(ok.get("status") == 201 and '"guardado"' in ok.get("respuesta", "")
+              and malo.get("error"), f"lo que contestó cada destino: {ok.get('status')} · "
+                                     f"{(malo.get('error') or '')[:40]}")
+        check(webhooks.fetch(ses, Receptor.get(r.id)) == 0
+              and len(WebhookRecibido.of(r.id)) == 1, "volver a leer no duplica")
+        webhooks.uninstall(ses, Receptor.get(r.id))
+        srv.shutdown()
+    Receptor.delete(r.id)
+
+
 def prepare_server_db(tipo: str, host, puerto, usuario, clave) -> str:  # propio
     """Crea kraken_prueba_<tipo> con clientes (120), pedidos (30, FK) y una vista."""
     nombre = f"kraken_prueba_{tipo}"
@@ -1305,6 +1461,7 @@ def main() -> int:  # propio
     test_ssh()
     test_console()
     test_webhooks()
+    test_tunnels()
     test_server_db("postgres", "CK_TEST_PG")
     test_server_db("mysql", "CK_TEST_MYSQL")
     print()

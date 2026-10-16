@@ -29,6 +29,8 @@ class ServersView:
         self.vista = ft.View(
             route=routes.SSH,
             appbar=ft.AppBar(title=ft.Text("SSH"), actions=[
+                ft.IconButton(ft.Icons.PUBLIC, tooltip="Exponer puertos (ngrok / Cloudflare)",
+                              on_click=lambda e: page.navigate(routes.SSH_TUNELES)),
                 ft.IconButton(ft.Icons.PLAYLIST_PLAY, tooltip="Comandos guardados",
                               on_click=lambda e: commands_manager(page, None))]),
             scroll=ft.ScrollMode.AUTO,

@@ -1,5 +1,36 @@
 # Cambios de ControlKraken
 
+## 1.10.0 — 2026-10-16
+
+### Nuevo
+- **Exponer un puerto** (Kraken > SSH > el globo, o "Exponer puerto" en el
+  panel del servidor): es `ngrok http 8069` sin ir a la terminal.
+  - Eliges el equipo, el puerto y **ngrok o Cloudflare**; la app lo arranca
+    por SSH en segundo plano (sigue abierto aunque cierres la app) y te da la
+    URL `https://…` para **copiar o compartir** (p. ej. al consultor).
+  - Ves todos los que tienes abiertos y los **cierras con un botón**.
+  - **ngrok**: usa el authtoken que tu equipo ya tenga; si no, te lo pide una
+    vez (se guarda en la app y se le pone al equipo). Opción de **dominio
+    fijo**. Si tu cuenta ya tiene el máximo de túneles a la vez, lo explica.
+  - **Cloudflare**: sin cuenta; la URL cambia cada vez que lo abres.
+  - Si el equipo no tiene ngrok / cloudflared, ofrece **bajarlo** de su sitio
+    oficial a `~/.controlkraken/bin` (sin sudo).
+- **Webhooks: URL pública con túnel.** En cada receptor eliges "URL pública":
+  Directa (IP:puerto), **ngrok** o **Cloudflare**. Con túnel la URL es
+  `https://…` (lo que piden los proveedores) y no hay que abrir puertos.
+- **Webhooks: "Reenviar a…"** (hasta 5 URLs). Cada webhook se guarda y además
+  se manda igual (método, headers, query, body) a tus destinos, p. ej. tu Odoo
+  local por ngrok y el del cliente. El proveedor recibe su respuesta al
+  instante; el reenvío va después. En el detalle ves **qué contestó cada
+  destino** (código, tiempo y respuesta: hasta el Traceback de Odoo).
+
+### Cambios
+- Revisar si un proceso sigue vivo ya no se confunde con procesos "zombi".
+- Migración 0021: tabla `kt_tuneles_publicos`; `reenviar` en receptores,
+  `reenvios` en lo recibido y el authtoken de ngrok en ajustes. Respaldo: 34 tablas.
+- `verificar_kraken.py` prueba túneles con un ngrok y un cloudflared de prueba
+  (token, dominio fijo, límite de cuenta) y el reenvío contra un servidor real.
+
 ## 1.9.0 — 2026-10-15
 
 ### Nuevo

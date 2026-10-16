@@ -13,6 +13,11 @@ que corra en cualquier Linux con python3. Se guarda en
 Solo guarda lo que llega a /<clave> (o /<clave>/algo): lo demás responde 404 y
 no se anota, así los robots que escanean internet no llenan tu lista.
 
+Reenviar (config "reenviar": [urls]): PRIMERO contesta al que mandó (Stripe no
+espera), y luego en otro hilo manda lo mismo a cada URL. Lo que contestó cada
+destino se anota en un renglón aparte {"id": <el mismo>, "actualiza": true,
+"reenvios": […]}, que la app junta con el webhook.
+
 La app NO necesita estar abierta: el receptor guarda todo y la app lo lee
 (por SSH) cuando abres la pantalla. Qué es / dónde: notas técnicas, nota 54.
 """
@@ -20,6 +25,7 @@ La app NO necesita estar abierta: el receptor guarda todo y la app lo lee
 SCRIPT = r'''#!/usr/bin/env python3
 # Receptor de webhooks de ControlKraken. Lo instaló la app; se puede borrar desde ella.
 import base64, json, os, sys, threading, time
+import urllib.error, urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -34,14 +40,54 @@ def ultimo_id():
     try:
         with open(ARCHIVO, "rb") as f:
             f.seek(0, 2)
-            f.seek(max(0, f.tell() - 65536))
+            inicio = max(0, f.tell() - 65536)
+            f.seek(inicio)
             renglones = f.read().decode("utf-8", "replace").strip().splitlines()
-        return json.loads(renglones[-1])["id"] if renglones else 0
+        ids = []
+        for renglon in renglones[1:] if inicio else renglones:   # el 1º puede venir cortado
+            try:
+                ids.append(json.loads(renglon)["id"])
+            except (ValueError, KeyError):
+                pass
+        return max(ids) if ids else 0
     except (OSError, ValueError, KeyError, IndexError):
         return 0
 
 
 SIGUIENTE = [ultimo_id() + 1]
+
+
+SALTAR = {"host", "content-length", "connection", "transfer-encoding", "accept-encoding"}
+
+
+def anotar(registro):
+    with CANDADO:
+        with open(ARCHIVO, "a", encoding="utf-8") as f:
+            f.write(json.dumps(registro, ensure_ascii=False) + "\n")
+
+
+def reenviar(numero, metodo, headers, datos, query):
+    resultados = []
+    for url in CONF.get("reenviar") or []:
+        destino = url + (("&" if "?" in url else "?") + query if query else "")
+        cabeceras = {k: v for k, v in headers if k.lower() not in SALTAR}
+        cabeceras["X-Kraken-Reenvio"] = "1"
+        inicio = time.time()
+        r = {"url": url}
+        try:
+            peticion = urllib.request.Request(destino, data=datos if datos else None,
+                                              headers=cabeceras, method=metodo)
+            with urllib.request.urlopen(peticion, timeout=15) as resp:
+                r["status"] = resp.status
+                r["respuesta"] = resp.read(4000).decode("utf-8", "replace")
+        except urllib.error.HTTPError as ex:
+            r["status"] = ex.code
+            r["respuesta"] = ex.read(4000).decode("utf-8", "replace")
+        except Exception as ex:
+            r["error"] = (type(ex).__name__ + ": " + str(getattr(ex, "reason", ex)))[:300]
+        r["ms"] = round((time.time() - inicio) * 1000)
+        resultados.append(r)
+    anotar({"id": numero, "actualiza": True, "reenvios": resultados})
 
 
 def podar():
@@ -96,12 +142,15 @@ class Receptor(BaseHTTPRequestHandler):
         except UnicodeDecodeError:
             cuerpo, b64 = base64.b64encode(datos).decode("ascii"), True
         ip = self.headers.get("X-Forwarded-For", "").split(",")[0].strip() or self.client_address[0]
+        destinos = CONF.get("reenviar") or []
         with CANDADO:
             registro = {"id": SIGUIENTE[0],
                         "fecha": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                         "metodo": self.command, "ruta": ruta[len(clave):] or "/",
                         "query": query, "headers": [[k, v] for k, v in self.headers.items()],
                         "body": cuerpo, "base64": b64, "tamano": len(datos), "ip": ip}
+            if destinos:
+                registro["reenvios"] = "pendiente"
             SIGUIENTE[0] += 1
             with open(ARCHIVO, "a", encoding="utf-8") as f:
                 f.write(json.dumps(registro, ensure_ascii=False) + "\n")
@@ -114,6 +163,10 @@ class Receptor(BaseHTTPRequestHandler):
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(respuesta)
+        if destinos and self.headers.get("X-Kraken-Reenvio") != "1":   # sin bucles
+            threading.Thread(target=reenviar, daemon=True, args=(
+                registro["id"], self.command, list(self.headers.items()), datos,
+                query)).start()
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _atender
 

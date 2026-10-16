@@ -100,6 +100,10 @@ def receiver_dialog(page: ft.Page, r: Receptor | None, on_saved):  # propio
     txt_resp = campo("Cuerpo de la respuesta", r.respuesta if r else RESPUESTA_POR_DEFECTO,
                      multiline=True, min_lines=1, max_lines=4,
                      text_style=ft.TextStyle(font_family="monospace"))
+    txt_reenviar = campo("Reenviar a (una URL por renglón, opcional)",
+                         "\n".join(r.reenviar or []) if r else "", multiline=True,
+                         min_lines=1, max_lines=5, hint_text="https://mi-odoo.ngrok-free.app/webhook",
+                         text_style=ft.TextStyle(font_family="monospace", size=12))
     lbl_error = ft.Text(color=ft.Colors.RED, size=12)
 
     def guardar(e):  # propio
@@ -108,7 +112,14 @@ def receiver_dialog(page: ft.Page, r: Receptor | None, on_saved):  # propio
                            equipo_id=int(dd_servidor.value) if dd_servidor.value else None,
                            puerto=int(txt_puerto.value or 0),
                            max_guardados=int(txt_max.value or 0),
-                           status=int(txt_status.value or 0), respuesta=txt_resp.value or "")
+                           status=int(txt_status.value or 0), respuesta=txt_resp.value or "",
+                           reenviar=[u.strip() for u in (txt_reenviar.value or "").splitlines()
+                                     if u.strip()])
+            for u in valores["reenviar"]:
+                if not u.startswith(("http://", "https://")) or " " in u:
+                    raise ValueError(f"No es una URL: {u[:60]}")
+            if len(valores["reenviar"]) > 5:
+                raise ValueError("Hasta 5 destinos para reenviar")
             for otro in Receptor.search_all():
                 if (otro.equipo_id == valores["equipo_id"] and otro.puerto == valores["puerto"]
                         and (r is None or otro.id != r.id)):
@@ -124,12 +135,17 @@ def receiver_dialog(page: ft.Page, r: Receptor | None, on_saved):  # propio
 
     page.show_dialog(ft.AlertDialog(
         title=ft.Text("Editar receptor" if r else "Nuevo receptor"),
-        content=ft.Container(width=440, content=ft.Column(tight=True, spacing=10, controls=[
+        content=ft.Container(width=440, content=ft.Column(
+            tight=True, spacing=10, scroll=ft.ScrollMode.AUTO, controls=[
             txt_nombre, ft.Row([dd_servidor]),
             ft.Row([txt_puerto, txt_max], wrap=True),
             ft.Text("El puerto debe estar libre y abierto en el firewall del servidor (mayor a "
                     "1024).", size=12, color=ft.Colors.OUTLINE),
-            ft.Row([txt_status]), txt_resp, lbl_error])),
+            ft.Row([txt_status]), txt_resp, txt_reenviar,
+            ft.Text("Cada webhook se guarda y además se manda igual (método, headers, body) a "
+                    "esas URLs, p. ej. tu Odoo local por ngrok. Se ve qué contestó cada una.",
+                    size=12, color=ft.Colors.OUTLINE),
+            lbl_error])),
         actions=[ft.TextButton("Cancelar", on_click=lambda e: page.pop_dialog()),
                  ft.FilledButton("Guardar", on_click=guardar)],
     ))
