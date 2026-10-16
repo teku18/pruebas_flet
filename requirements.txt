@@ -36,3 +36,12 @@ cryptography==48.0.0
 bcrypt==5.0.0
 pynacl==1.6.2
 cffi==2.0.0
+
+# Kraken Tools · Explorador de bases: PostgreSQL (pg8000) y MySQL/MariaDB (PyMySQL).
+# Los dos y sus dependencias son puro Python: funcionan igual en el celular.
+pg8000==1.31.5
+scramp==1.4.17
+asn1crypto==1.5.1
+python-dateutil==2.9.0.post0
+six==1.17.0
+pymysql==1.2.3

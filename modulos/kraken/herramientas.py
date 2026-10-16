@@ -24,7 +24,7 @@ class Herramienta:
 HERRAMIENTAS = [
     Herramienta("Cliente HTTP", "Peticiones a APIs, como Postman", ft.Icons.HTTP,
                 ft.Colors.ORANGE, routes.HTTP),
-    Herramienta("Explorador SQLite", "Tablas, datos y SQL de bases .db", ft.Icons.STORAGE,
+    Herramienta("Explorador de bases", "SQLite, PostgreSQL y MySQL (directo o por SSH)", ft.Icons.STORAGE,
                 ft.Colors.BLUE, routes.SQLITE),
     Herramienta("Red", "Ping, puertos, DNS, IP, certificados, whois", ft.Icons.LAN,
                 ft.Colors.TEAL, routes.RED),

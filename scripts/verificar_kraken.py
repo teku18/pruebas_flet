@@ -21,6 +21,11 @@ Trabaja en una carpeta temporal (CK_DATA_ROOT): NUNCA toca tu BD real.
            esta máquina, con un `sudo` falso: conexión, huella del servidor,
            métricas (CPU, RAM, discos, red, procesos, servicios), comandos con
            sudo, logs y errores (contraseña mala, puerto cerrado).
+  Bases    PostgreSQL y MySQL de verdad, directo y por túnel SSH. Solo corren si
+           les dices dónde hay uno de prueba (si no, se saltan):
+             CK_TEST_PG=127.0.0.1:5432:usuario:clave
+             CK_TEST_MYSQL=127.0.0.1:3306:usuario:clave
+           Crean y borran sus propias bases de prueba (kraken_prueba_*).
            en la red (en 127.0.0.0/29) e historial.
 """
 import asyncio
@@ -31,6 +36,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -617,10 +623,17 @@ def test_red(base: str):  # propio
 # ============================================================================
 SUDO_FALSO = """#!/bin/bash
 # sudo de prueba: -S lee la contraseña de la entrada; si es "secreto", ejecuta
-while [ "${1:0:1}" = "-" ]; do [ "$1" = "-p" ] && shift; shift; done
+# -v valida y "recuerda" (archivo marca); -n corre sólo si ya se validó.
+validar=0; sinclave=0
+while [ "${1:0:1}" = "-" ]; do
+  case "$1" in -p) shift;; -v) validar=1;; -n) sinclave=1;; esac; shift; done
+if [ $sinclave = 1 ]; then
+  [ -e "${TMPDIR:-/tmp}/ck_sudo_ok" ] || { echo "sudo: a password is required" >&2; exit 1; }
+  exec "$@"; fi
 read -r clave
 if [ "$clave" != "secreto" ]; then echo "Sorry, try again." >&2
   echo "sudo: 1 incorrect password attempt" >&2; exit 1; fi
+if [ $validar = 1 ]; then touch "${TMPDIR:-/tmp}/ck_sudo_ok"; exit 0; fi
 exec "$@"
 """
 
@@ -640,6 +653,7 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
     class Srv(paramiko.ServerInterface):
         def __init__(self):  # propio
             self.listo, self.cmd = threading.Event(), None
+            self.tuneles = {}  # canal -> (host, puerto) de un túnel
 
         def check_auth_password(self, u, p):  # noqa: D102
             return paramiko.AUTH_SUCCESSFUL if (u, p) == (usuario, clave) else paramiko.AUTH_FAILED
@@ -655,15 +669,24 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
             self.listo.set()
             return True
 
+        def check_channel_direct_tcpip_request(self, chanid, origen, destino):  # noqa: D102
+            self.tuneles[chanid] = destino
+            return paramiko.OPEN_SUCCEEDED
+
     def channel(t: "paramiko.Transport"):  # propio
         while t.is_active():
             ch = t.accept(5)
             if ch is None:
                 continue
             srv = t.server_object
+            if ch.get_id() in srv.tuneles:  # túnel: conectar al destino y pasar bytes
+                from modulos.kraken.ssh.tunel import Tunel
+                destino = socket.create_connection(srv.tuneles.pop(ch.get_id()))
+                threading.Thread(target=Tunel._pump, args=(destino, ch), daemon=True).start()
+                continue
             srv.listo.wait(5)
             srv.listo.clear()
-            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", TMPDIR=str(bin_dir))
             proc = subprocess.Popen(["bash", "-c", srv.cmd], stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
             ch.settimeout(0.3)
@@ -676,6 +699,26 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
                     entrada += trozo
             except socket.timeout:
                 pass
+            if srv.cmd.startswith("bash -l -s"):  # consola: salida en vivo + Ctrl+C
+                proc.stdin.write(entrada)
+                proc.stdin.close()
+                os.set_blocking(proc.stdout.fileno(), False)
+                while True:
+                    if ch.closed or not t.is_active():
+                        proc.kill()
+                        break
+                    trozo = proc.stdout.read(4096)
+                    if trozo:
+                        ch.sendall(trozo)
+                    elif proc.poll() is not None:
+                        resto = proc.stdout.read() or b""
+                        ch.sendall(resto + (proc.stderr.read() or b""))
+                        ch.send_exit_status(proc.returncode)
+                        ch.close()
+                        break
+                    else:
+                        time.sleep(0.05)
+                continue
             out, err = proc.communicate(entrada)
             ch.sendall(out)
             ch.sendall_stderr(err)
@@ -785,6 +828,212 @@ def test_ssh():  # propio
           "vienen los comandos iniciales")
 
 
+# ============================================================================
+# Bases de datos en servidor (PostgreSQL / MySQL)
+# ============================================================================
+def _admin(tipo: str, host, puerto, usuario, clave, base=None):  # propio
+    if tipo == "postgres":
+        import pg8000.dbapi
+        con = pg8000.dbapi.connect(user=usuario, password=clave, host=host, port=puerto,
+                                   database=base or "postgres")
+        con.autocommit = True
+        return con
+    import pymysql
+    return pymysql.connect(host=host, port=puerto, user=usuario, password=clave,
+                           database=base, autocommit=True)
+
+
+def test_console():  # propio
+    """Consola SSH: comandos libres, carpeta recordada, sudo, Tab, Ctrl+C."""
+    from modulos.kraken.models import Equipo
+    from modulos.kraken.ssh import consola
+    from modulos.kraken.ssh.conexion import Sesion
+
+    print("Consola SSH")
+    puerto = start_ssh()
+    e = Equipo.create(nombre="Consola prueba", host="127.0.0.1", ssh_usuario="edgar",
+                      ssh_puerto=puerto, ssh_clave="secreto")
+    carpeta = Path(tempfile.mkdtemp())
+    (carpeta / "sub dir").mkdir()
+    (carpeta / "archivo_uno.txt").write_text("hola\n")
+    with Sesion(e) as ses:
+        c = consola.Consola(ses)
+        c.start()
+        check(c.cwd and c.cwd.startswith("/"), f"carpeta de inicio: {c.cwd}")
+        r = c.run(f"cd {carpeta}")
+        check(r.codigo == 0 and c.cwd == str(carpeta), "cd se recuerda")
+        r = c.run("ls")
+        check(r.codigo == 0 and "archivo_uno.txt" in r.salida and "sub dir" in r.salida,
+              "ls libre en la carpeta recordada")
+        r = c.run("cd 'sub dir' && pwd")
+        check(c.cwd == str(carpeta / "sub dir") and r.salida.strip() == c.cwd, "cd con espacios")
+        c.run("cd ..")
+        r = c.run("ls /no/existe")
+        check(r.codigo not in (0, None) and "/no/existe" in r.salida,
+              "error: stderr junto a la salida + código")
+        r = c.run("echo uno; echo dos >&2; echo tres | tr a-z A-Z")
+        check(r.salida.splitlines() == ["uno", "dos", "TRES"], "tuberías y varios comandos")
+        r = c.run("cd /tmp && sudo echo hola-root")
+        check(r.codigo == 0 and r.salida.strip() == "hola-root", "sudo en medio del comando")
+        c.run(f"cd {carpeta}")
+        r = c.run("echo dato | sudo tee " + str(carpeta / "t.txt"))
+        check((carpeta / "t.txt").read_text() == "dato\n",
+              "sudo tee: la contraseña NO se escribe en el archivo")
+        pedazos = []
+        r = c.run("for i in 1 2 3; do echo l$i; sleep 0.3; done", on_chunk=pedazos.append)
+        check(len(pedazos) >= 2 and "".join(pedazos).split() == ["l1", "l2", "l3"],
+              f"salida en vivo ({len(pedazos)} pedazos)")
+        threading.Timer(0.8, c.cancel).start()
+        r = c.run("echo empiezo; sleep 30; echo nunca")
+        check(r.cancelado and r.tiempo_ms < 5000 and "nunca" not in r.salida,
+              f"Ctrl+C corta el comando ({r.tiempo_ms} ms)")
+        r = c.run("echo sigo-vivo")
+        check(r.salida.strip() == "sigo-vivo" and c.cwd == str(carpeta), "después de Ctrl+C sigue")
+        check(c.complete("ls arch") == ["archivo_uno.txt"], "Tab: archivo")
+        check(c.complete("ls su") == ["sub dir/"], "Tab: carpeta con /")
+        check("echo" in c.complete("ech"), "Tab: comando")
+        check(consola.common_prefix(["archivo_a", "archivo_b"]) == "archivo_", "prefijo común")
+    check(consola.full_screen_hint("sudo vim /etc/hosts") is not None
+          and consola.full_screen_hint("htop") is not None
+          and consola.full_screen_hint("cat vim.txt") is None, "avisa vim/htop (sin TTY)")
+    Equipo.delete(e.id)
+
+
+def prepare_server_db(tipo: str, host, puerto, usuario, clave) -> str:  # propio
+    """Crea kraken_prueba_<tipo> con clientes (120), pedidos (30, FK) y una vista."""
+    nombre = f"kraken_prueba_{tipo}"
+    con = _admin(tipo, host, puerto, usuario, clave)
+    cur = con.cursor()
+    cur.execute(f"DROP DATABASE IF EXISTS {nombre}")
+    cur.execute(f"CREATE DATABASE {nombre}")
+    con.close()
+    con = _admin(tipo, host, puerto, usuario, clave, nombre)
+    cur = con.cursor()
+    if tipo == "postgres":
+        cur.execute("CREATE TABLE clientes (id serial PRIMARY KEY, nombre varchar(80) NOT NULL, "
+                    "ciudad text, datos jsonb, saldo numeric(12,2))")
+        cur.execute("CREATE SCHEMA ventas")
+        cur.execute("CREATE TABLE ventas.pedidos (id serial PRIMARY KEY, "
+                    "cliente_id int REFERENCES clientes(id), total numeric(10,2))")
+        cur.execute("CREATE INDEX ix_pedidos_cliente ON ventas.pedidos(cliente_id)")
+        cur.execute("CREATE VIEW grandes AS SELECT * FROM ventas.pedidos WHERE total > 100")
+        for i in range(1, 121):
+            cur.execute("INSERT INTO clientes (nombre, ciudad, datos, saldo) VALUES "
+                        "(%s, %s, %s::jsonb, %s)", (f"Cliente {i}", "CDMX" if i % 2 else "Puebla",
+                                                    '{"vip": true}' if i == 1 else None, i * 1.5))
+        for i in range(1, 31):
+            cur.execute("INSERT INTO ventas.pedidos (cliente_id, total) VALUES (%s, %s)",
+                        (i, i * 10.5))
+        cur.execute("ANALYZE")
+    else:
+        cur.execute("CREATE TABLE clientes (id int AUTO_INCREMENT PRIMARY KEY, nombre "
+                    "varchar(80) NOT NULL, ciudad text, saldo decimal(12,2)) ENGINE=InnoDB")
+        cur.execute("CREATE TABLE pedidos (id int AUTO_INCREMENT PRIMARY KEY, cliente_id int, "
+                    "total decimal(10,2), INDEX ix_pedidos_cliente (cliente_id), "
+                    "FOREIGN KEY (cliente_id) REFERENCES clientes(id)) ENGINE=InnoDB")
+        cur.execute("CREATE VIEW grandes AS SELECT * FROM pedidos WHERE total > 100")
+        for i in range(1, 121):
+            cur.execute("INSERT INTO clientes (nombre, ciudad, saldo) VALUES (%s, %s, %s)",
+                        (f"Cliente {i}", "CDMX" if i % 2 else "Puebla", i * 1.5))
+        for i in range(1, 31):
+            cur.execute("INSERT INTO pedidos (cliente_id, total) VALUES (%s, %s)", (i, i * 10.5))
+        cur.execute("ANALYZE TABLE clientes, pedidos")
+        cur.fetchall()
+    con.close()
+    return nombre
+
+
+def test_server_db(tipo: str, variable: str):  # propio
+    from modulos.kraken.models import ConexionSqlite, Equipo
+    from modulos.kraken.sqlite import motores
+    from modulos.kraken.sqlite import services as q
+    from modulos.kraken.ssh.tunel import close_all
+
+    valor = os.environ.get(variable)
+    titulo = "PostgreSQL" if tipo == "postgres" else "MySQL / MariaDB"
+    print(titulo)
+    if not valor:
+        print(f"  · sin servidor de prueba ({variable}=host:puerto:usuario:clave): se salta")
+        return
+    host, puerto, usuario, clave = valor.split(":", 3)
+    puerto = int(puerto)
+    nombre = prepare_server_db(tipo, host, puerto, usuario, clave)
+    pedidos = "ventas.pedidos" if tipo == "postgres" else "pedidos"
+
+    sin_base = q.save_server(None, nombre=f"Prueba {tipo}", tipo=tipo, host=host, puerto=puerto,
+                             usuario=usuario, clave=clave, base_datos="")
+    prueba = q.test_server(q.get_database(sin_base.id))
+    check(prueba.ok and nombre in prueba.bases and prueba.version,
+          f"probar conexión: {prueba.version} · {len(prueba.bases)} bases")
+    mala = q.save_server(None, nombre="Mala", tipo=tipo, host=host, puerto=puerto,
+                         usuario=usuario, clave="no-es", base_datos=nombre)
+    prueba = q.test_server(q.get_database(mala.id))
+    check(not prueba.ok and "contraseña incorrectos" in prueba.mensaje, prueba.mensaje)
+    import socket
+    libre = socket.socket(); libre.bind(("127.0.0.1", 0)); cerrado = libre.getsockname()[1]
+    libre.close()
+    ConexionSqlite.update(mala.id, puerto=cerrado)
+    prueba = q.test_server(q.get_database(mala.id))
+    check(not prueba.ok and "Nadie atiende" in prueba.mensaje, "puerto cerrado: explicado")
+
+    c = q.save_server(sin_base.id, base_datos=nombre, tipo=tipo)
+    base = q.get_database(c.id)
+    check(base.solo_lectura and base.es_servidor and base.existe, "nuevo servidor: solo lectura")
+    tablas = {t.nombre: t for t in q.tables(base)}
+    check(tablas["clientes"].filas == 120 and pedidos in tablas and tablas["grandes"].tipo == "view",
+          f"tablas y vistas ({', '.join(sorted(tablas))})")
+    e = q.schema(base, pedidos)
+    col = {x.nombre: x for x in e.columnas}
+    check(col["id"].llave and col["cliente_id"].apunta_a == "clientes.id"
+          and any(i[0] == "ix_pedidos_cliente" and i[2] == ["cliente_id"] for i in e.indices)
+          and "CREATE TABLE" in e.sql, "esquema: llave, foránea, índice y CREATE")
+    cols, filas, total = pagina = q.page_rows(base, "clientes", pagina=2)
+    check(len(filas) == 20 and total == 120 and not pagina.aproximado, "página 3 de 50 en 50")
+    cols, filas, total = q.page_rows(base, "clientes", buscar="puebla")
+    check(total == 60, "búsqueda en todas las columnas (sin distinguir mayúsculas)")
+    r = q.run(base, "SELECT ciudad, COUNT(*) AS n FROM clientes GROUP BY ciudad ORDER BY 1;")
+    check(r.error is None and r.columnas == ["ciudad", "n"] and len(r.filas) == 2, "SELECT")
+    r = q.run(base, "DELETE FROM clientes")
+    check(r.error and "solo lectura" in r.error, f"solo lectura de verdad ({titulo} lo rechaza)")
+    ConexionSqlite.update(c.id, solo_lectura=False)
+    base = q.get_database(c.id)
+    r = q.run(base, "UPDATE clientes SET ciudad = 'GDL' WHERE id <= 5; "
+                    "INSERT INTO clientes (nombre) VALUES ('Nuevo')")
+    check(r.error is None and r.cambios == 6 and r.sentencias == 2, "editable: varias sentencias")
+    r = q.run(base, "UPDATE clientes SET ciudad = 'X'; INSERT INTO no_existe VALUES (1)")
+    _, filas, _ = q.page_rows(base, "clientes", buscar="X")
+    check(r.error and not any(f[2] == "X" for f in filas), "si una sentencia falla, no se aplica ninguna")
+    if tipo == "postgres":
+        _, filas, _ = q.page_rows(base, "clientes", buscar="vip")
+        check(q.cell_text(filas[0][3]) == '{"vip": true}', "columna JSON se ve como JSON")
+        anterior = motores.TIEMPO_MAX_S
+        motores.TIEMPO_MAX_S = 1
+        r = q.run(base, "SELECT pg_sleep(3)")
+        motores.TIEMPO_MAX_S = anterior
+        check(r.error and "tardó más" in r.error, "consulta muy lenta: se corta sola")
+    check(q.cell_text(filas[0][-1]).replace(".", "").isdigit(), "números decimales")
+
+    # --- por túnel SSH (el servidor falso hace de servidor SSH)
+    equipo = Equipo.create(nombre=f"SSH {tipo}", host="127.0.0.1", ssh_usuario="edgar",
+                           ssh_puerto=start_ssh(), ssh_clave="secreto")
+    t = q.save_server(None, nombre=f"{tipo} por SSH", tipo=tipo, host="localhost",
+                      puerto=puerto, usuario=usuario, clave=clave, base_datos=nombre,
+                      ssh_equipo_id=equipo.id)
+    base_t = q.get_database(t.id)
+    prueba = q.test_server(base_t)
+    tablas = q.tables(base_t)
+    from modulos.kraken.ssh import tunel
+    abiertos = len(tunel._ABIERTOS)
+    q.page_rows(base_t, "clientes")
+    check(prueba.ok and len(tablas) >= 3 and len(tunel._ABIERTOS) == abiertos == 1,
+          "por túnel SSH (el túnel se reusa entre consultas)")
+    close_all()
+    check(not tunel._ABIERTOS, "cerrar túneles al salir")
+    con = _admin(tipo, host, puerto, usuario, clave)
+    con.cursor().execute(f"DROP DATABASE IF EXISTS {nombre}")
+    con.close()
+
+
 def main() -> int:  # propio
     database.init_db()
     print(f"Carpeta de prueba: {TMP}")
@@ -794,6 +1043,9 @@ def main() -> int:  # propio
     test_backup(conexion_id)
     test_red(base)
     test_ssh()
+    test_console()
+    test_server_db("postgres", "CK_TEST_PG")
+    test_server_db("mysql", "CK_TEST_MYSQL")
     print()
     if FALLAS:
         print(f"✗ {len(FALLAS)} prueba(s) fallaron")

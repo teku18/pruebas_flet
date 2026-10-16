@@ -31,6 +31,10 @@ dependencies = [
   "bcrypt==5.0.0",
   "pynacl==1.6.2",
   "cffi==2.0.0",
+  # Kraken Tools · Explorador de bases: PostgreSQL y MySQL/MariaDB. Puro Python
+  # (también scramp, asn1crypto, python-dateutil y six, que trae pg8000).
+  "pg8000==1.31.5",
+  "pymysql==1.2.3",
 ]
 
 [tool.flet]

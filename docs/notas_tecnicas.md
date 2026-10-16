@@ -58,6 +58,10 @@ código** (para que lo abras y lo veas funcionando).
 | 45 | [Probar red sin internet: servidores falsos](#45-probar-red-sin-internet-servidores-falsos) | `scripts/verificar_kraken.py` |
 | 46 | [SSH con paramiko: huella del servidor y sudo sin teclado](#46-ssh-con-paramiko-huella-del-servidor-y-sudo-sin-teclado) | `modulos/kraken/ssh/conexion.py` |
 | 47 | [Panel en vivo: /proc, diferencias y "solo mientras lo ves"](#47-panel-en-vivo-proc-diferencias-y-solo-mientras-lo-ves) | `modulos/kraken/ssh/metricas.py`, `views/panel.py` |
+| 48 | [Una sola pantalla para tres motores: DB-API](#48-una-sola-pantalla-para-tres-motores-db-api) | `modulos/kraken/sqlite/motores.py` |
+| 49 | [Solo lectura y 30 s: que lo cuide el servidor](#49-solo-lectura-y-30-s-que-lo-cuide-el-servidor) | `motores.py` (`connect`) |
+| 50 | [Túnel SSH: llegar a la base sin abrir puertos](#50-túnel-ssh-llegar-a-la-base-sin-abrir-puertos) | `modulos/kraken/ssh/tunel.py` |
+| 51 | [Consola SSH sin terminal: carpeta, sudo y Ctrl+C](#51-consola-ssh-sin-terminal-carpeta-sudo-y-ctrlc) | `modulos/kraken/ssh/consola.py` |
 
 ---
 
@@ -1241,6 +1245,127 @@ al instante.
 `views/panel.py` (`_loop`, `_on_lifecycle`).
 
 
+## 48. Una sola pantalla para tres motores: DB-API
+
+**Qué es.** Python tiene un "contrato" para hablar con bases de datos, la
+**DB-API** (PEP 249): `con = conectar(...)`, `cur = con.cursor()`,
+`cur.execute(sql, params)`, `cur.fetchmany(n)`, `cur.description` (nombres de
+columnas), `con.commit()` / `con.rollback()`. `sqlite3`, **pg8000**
+(PostgreSQL) y **PyMySQL** lo cumplen, así que la pantalla de SQL es la misma
+para los tres.
+
+**Lo que NO es igual** va en una clase por motor (`Sqlite`, `Postgres`,
+`Mysql` en `MOTORES`): cómo se escriben los nombres (`"tabla"` vs `` `tabla` ``),
+de dónde salen las tablas (`sqlite_master` vs `information_schema`), el
+marcador de parámetros (`?` vs `%s`) y cómo contar filas.
+
+**Contar filas sin tardar minutos.** `SELECT count(*)` en una tabla de 50
+millones de filas recorre todo. PostgreSQL y MySQL guardan un estimado
+(`pg_class.reltuples`, `information_schema.TABLES.TABLE_ROWS`): se usa ese y se
+muestra con **~**. En las páginas de datos, si el estimado pasa de 1 millón, el
+total también es aproximado.
+
+**Por qué pg8000 y PyMySQL** (y no psycopg2 / mysqlclient): son **puro
+Python**, sin partes en C, así que funcionan en el APK sin depender de que Flet
+los tenga compilados (nota 46).
+
+**Dónde.** `modulos/kraken/sqlite/motores.py` (`MOTORES`, `opened`, `page`),
+`services.py` (`run`, `test_server`, `friendly_connect_error`).
+
+
+## 49. Solo lectura y 30 s: que lo cuide el servidor
+
+**El problema.** Revisar si el SQL "empieza con SELECT" no basta: un
+`SELECT funcion_que_borra()` o un `WITH x AS (DELETE …)` pasan el filtro.
+
+**La solución:** al conectar, se le pide AL SERVIDOR que la sesión sea de solo
+lectura. Ahí ya no hay truco que valga: el servidor rechaza cualquier escritura.
+
+```sql
+-- PostgreSQL
+SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;
+SET statement_timeout = '30s';
+-- MySQL / MariaDB
+SET SESSION TRANSACTION READ ONLY;
+SET SESSION MAX_EXECUTION_TIME = 30000;   -- MySQL (MariaDB: max_statement_time = 30)
+```
+
+Con "Permitir cambios" todo corre en una transacción: si falla una sentencia,
+`rollback()` y no se aplica ninguna. El **timeout** evita que una consulta
+olvidada (sin `WHERE`, sin `LIMIT`) deje trabajando al servidor del cliente.
+
+**Dónde.** `motores.py` (`Postgres.connect`, `Mysql.connect`,
+`is_read_only_error`), `services.py` (`_friendly_error`).
+
+
+## 50. Túnel SSH: llegar a la base sin abrir puertos
+
+**El caso.** El PostgreSQL de un cliente escucha solo en `localhost` del
+servidor (lo correcto). Desde el celular no se llega… pero por SSH sí.
+
+**Cómo funciona** ("local port forwarding", lo mismo que `ssh -L`):
+
+```
+celular: 127.0.0.1:41873  ──(dentro de la conexión SSH)──▶  servidor: localhost:5432
+```
+
+1. La app abre un puerto local al azar (`127.0.0.1:0` = "el que esté libre").
+2. Cada conexión que llega ahí se manda por SSH con un canal `direct-tcpip`:
+   `transporte.open_channel("direct-tcpip", ("localhost", 5432), origen)`.
+3. Un hilo pasa bytes de un lado al otro (`select` sobre los dos sockets).
+4. pg8000 / PyMySQL se conectan a `127.0.0.1:41873` sin saber nada de SSH.
+
+En el servidor no se abre nada nuevo: el tráfico va cifrado por el puerto 22.
+Los túneles se reutilizan mientras ves la base y se cierran al salir
+(`tunel.close_all()`). En el diálogo, "Host" es como lo ve el servidor SSH
+(casi siempre `localhost`).
+
+**Dónde.** `modulos/kraken/ssh/tunel.py` (`Tunel`, `tunnel_for`, `close_all`),
+`motores.py` (`opened`).
+
+
+## 51. Consola SSH sin terminal: carpeta, sudo y Ctrl+C
+
+**Sin TTY.** Una terminal de verdad (la de `ssh` en la PC) pide una "pantalla"
+al servidor (pty) para programas como vim o htop. La consola de la app no: cada
+comando corre en un `bash -l -s` nuevo y se lee su salida. Es más simple y
+estable en el celular; a cambio, vim/nano/htop/less no se pueden (se avisa qué
+usar).
+
+**¿Cómo se recuerda la carpeta si cada comando es un bash nuevo?** El script
+que se manda envuelve tu comando y al final imprime una marca con el código de
+salida y la carpeta en que quedó:
+
+```bash
+{
+cd '/opt/odoo' 2>/dev/null || cd
+<tu comando>
+__ck_c=$?
+printf '\n__CK_FIN_7f3a__ %s %s\n' "$__ck_c" "$(pwd)"
+} < /dev/null 2>&1
+```
+
+La app quita esa marca de la salida y guarda la carpeta para el siguiente
+comando. El bloque `{ }` hace que bash lea TODO el script antes de correrlo;
+`< /dev/null` evita que un comando se "coma" el resto del script esperando
+teclado; `2>&1` junta errores y salida en orden, como en una terminal.
+
+**sudo en cualquier parte.** Se define una función `sudo` que primero valida
+la contraseña guardada con `sudo -S -v` y luego corre `sudo -n …` (sin pedirla
+otra vez). Así la contraseña **nunca le llega al comando**: con el simple
+`echo clave | sudo -S tee archivo`, si sudo ya la recordaba, ¡la escribiría en
+el archivo! El script viaja por la entrada estándar (no en la línea de
+comandos), así que la contraseña tampoco se ve en `ps` del servidor.
+
+**Ctrl+C** = cerrar el canal SSH: el servidor manda la señal al proceso y lo
+corta. **Tab** = `compgen -c` (comandos) o `compgen -f` (archivos) en el
+servidor. La salida llega en pedazos desde un hilo y la pantalla se pinta cada
+0.2 s (no por cada pedazo) para no saturar el celular.
+
+**Dónde.** `modulos/kraken/ssh/consola.py` (`script`, `split_marker`,
+`Consola.run/complete/cancel`), `views/consola.py`.
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1257,3 +1382,4 @@ al instante.
 | 2026-10-14 | 1.5.0 | 40–42 (cliente HTTP async, cURL con shlex, SQLite solo lectura y archivos fuera del respaldo) |
 | 2026-10-14 | 1.6.0 | 43–45 (sockets, ping sin root, puertos en paralelo, dispositivos; DNS, certificados, Whois, WoL; servidores falsos) |
 | 2026-10-15 | 1.7.0 | 46–47 (SSH con paramiko, huella del servidor, sudo -S; panel en vivo con /proc) |
+| 2026-10-15 | 1.8.0 | 48–51 (DB-API para tres motores, solo lectura del lado del servidor, túnel SSH, consola SSH) |

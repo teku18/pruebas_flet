@@ -32,7 +32,7 @@ from modulos.kraken import routes
 
 class KrakenModule(AppModule):
     nombre = "Kraken Tools"
-    descripcion = "HTTP, SQLite, red y SSH"
+    descripcion = "HTTP, bases de datos, red y SSH"
     icono = ft.Icons.HANDYMAN
     route = routes.BASE
 
@@ -41,7 +41,7 @@ class KrakenModule(AppModule):
         from modulos.kraken.http.views import EnvironmentsView, HttpHome, RequestEditor
         from modulos.kraken.red.views import NetworkHistoryView, NetworkHome, TestView
         from modulos.kraken.sqlite.views import DatabaseView, DatabasesView
-        from modulos.kraken.ssh.views import LogsView, PanelView, ServersView
+        from modulos.kraken.ssh.views import ConsoleView, LogsView, PanelView, ServersView
         from modulos.kraken.views import KrakenHome
 
         self.inicio = KrakenHome(page)
@@ -50,16 +50,17 @@ class KrakenModule(AppModule):
         self.http = HttpHome(page, on_new=self.editor.open_new, on_open=self.editor.open_request,
                              on_open_history=self.editor.open_history)
         self.entornos = EnvironmentsView(page)
-        # SQLite: bases --tocar--> una base
+        # Bases (SQLite, PostgreSQL, MySQL): lista --tocar--> una base
         self.base = DatabaseView(page)
         self.bases = DatabasesView(page, on_open=self.base.open)
         # Red: inicio --tarjeta/equipo--> prueba · historial --tocar--> prueba
         self.prueba = TestView(page)
         self.red = NetworkHome(page, on_test=self.prueba.open)
         self.red_historial = NetworkHistoryView(page, on_open=self._open_history)
-        # SSH: servidores --tocar--> panel (cada 5 s) --Logs--> logs
+        # SSH: servidores --tocar--> panel (cada 5 s) --Logs/Consola--> encima del panel
         self.logs = LogsView(page)
-        self.panel = PanelView(page, on_logs=self.logs.open)
+        self.consola = ConsoleView(page)
+        self.panel = PanelView(page, on_logs=self.logs.open, on_console=self.consola.open)
         self.servidores = ServersView(page, on_open=self.panel.open)
 
     def _open_history(self, h):  # propio
@@ -99,10 +100,14 @@ class KrakenModule(AppModule):
                 self.red.load()
         elif route.startswith(routes.SSH):
             vistas.append(self.servidores.vista)
-            if route in (routes.SSH_PANEL, routes.SSH_LOGS) and self.panel.activo:
+            if route in (routes.SSH_PANEL, routes.SSH_LOGS, routes.SSH_CONSOLA) and self.panel.activo:
                 vistas.append(self.panel.vista)
+                if route == routes.SSH_PANEL:
+                    self.panel.wake()
             if route == routes.SSH_LOGS and self.logs.activo:
                 vistas.append(self.logs.vista)
+            elif route == routes.SSH_CONSOLA and self.consola.activo:
+                vistas.append(self.consola.vista)
             elif route != routes.SSH_PANEL or not self.panel.activo:
                 if route != routes.SSH:  # se recargó la app: no hay servidor abierto
                     self.page.route = routes.SSH
@@ -134,6 +139,9 @@ class KrakenModule(AppModule):
                                else routes.RED)
         elif route == routes.RED_HISTORIAL:
             self.page.navigate(routes.RED)
+        elif route == routes.SSH_CONSOLA:
+            self.consola.close()
+            self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)
         elif route == routes.SSH_LOGS:
             self.logs.close()
             self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)

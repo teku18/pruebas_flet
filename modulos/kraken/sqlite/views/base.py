@@ -15,8 +15,9 @@ Una base (/kraken/sqlite/base):
            [▶ Ejecutar] [★] [🕘 Guardadas]
            3 filas · 4 ms                 [⬇ CSV]
 
-El SQL corre en otro hilo (asyncio.to_thread): una consulta pesada no congela
-la pantalla. En una base editable, lo que no sea SELECT/PRAGMA pide confirmar.
+Todo (tablas, esquema, datos y SQL) corre en otro hilo (asyncio.to_thread):
+un servidor lento o una consulta pesada no congelan la pantalla. En
+PostgreSQL/MySQL los conteos de tablas enormes son aproximados (~). En una base editable, lo que no sea SELECT/PRAGMA pide confirmar.
 
 Los métodos marcados con  # propio  son nuestros; lo demás viene de Flet.
 """
@@ -29,7 +30,9 @@ from modulos.kraken import routes
 from modulos.kraken.comun import MONO, ask_text, copy_text, tabs_row
 from modulos.kraken.models import ConsultaSqlite
 from modulos.kraken.sqlite import services
+from modulos.kraken.sqlite.motores import MOTORES
 from modulos.kraken.sqlite.services import BaseInfo
+from modulos.kraken.ssh import tunel
 
 
 class DatabaseView:
@@ -38,7 +41,11 @@ class DatabaseView:
         self.base: BaseInfo | None = None
         self.activa = False
         self.pestana = "tablas"
-        self.tablas: list[services.Tabla] = []
+        self.tablas: list[services.Tabla] | None = []   # None = cargando
+        self.error_tablas = ""
+        self.esquemas: dict[str, object] = {}  # tabla -> Esquema | str (error) | None (cargando)
+        self.datos = None                      # Pagina | str (error) | None (cargando)
+        self.cargando_datos = False
         self.expandida: str | None = None    # tabla con el esquema abierto (pestaña Tablas)
         self.tabla: str | None = None        # tabla de la pestaña Datos
         self.pagina = 0
@@ -72,6 +79,7 @@ class DatabaseView:
     def open(self, base: BaseInfo):  # propio
         if self.base is None or self.base.id != base.id or self.base.nombre != base.nombre:
             self.pestana, self.expandida, self.tabla = "tablas", None, None
+            self.datos = None
             self.pagina, self.buscar, self.resultado = 0, "", None
             self.txt_sql.value = ""
             self.txt_buscar.value = ""
@@ -88,16 +96,34 @@ class DatabaseView:
                 ft.Icon(ft.Icons.LOCK if modo == "Solo lectura" else ft.Icons.EDIT,
                         size=14, color=color),
                 ft.Text(modo, size=12, color=color)]))
-        try:
-            self.tablas = services.tables(base)
-        except Exception as ex:  # noqa: BLE001  (archivo dañado, etc.)
-            self.tablas = []
-            notify(self.page, f"No se pudo abrir: {ex}")
+        self.tablas, self.error_tablas, self.esquemas = None, "", {}
         self._render()
         self.page.navigate(routes.SQLITE_BASE)
+        self.page.run_task(self.load_tables)
 
     def close(self):  # propio
         self.activa = False
+        tunel.close_all()   # los túneles SSH sólo viven mientras ves la base
+
+    async def load_tables(self):  # propio
+        base = self.base
+        try:
+            tablas = await asyncio.to_thread(services.tables, base)
+            error = ""
+        except Exception as ex:  # noqa: BLE001  (archivo dañado, servidor caído…)
+            tablas, error = [], services.friendly_connect_error(ex, base) if base.es_servidor else str(ex)
+        if base is not self.base:
+            return
+        self.tablas, self.error_tablas = tablas, error
+        if self.pestana == "datos":
+            self.page.run_task(self.load_data)
+        self._refresh_safe()
+
+    def _refresh_safe(self):  # propio
+        if not self.activa:
+            return
+        self._render()
+        self.page.update()
 
     def refresh(self):  # propio
         self._render()
@@ -106,10 +132,31 @@ class DatabaseView:
     def set_tab(self, pestana: str):  # propio
         self.pestana = pestana
         self.refresh()
+        if pestana == "datos" and self.datos is None and self.tablas:
+            self.page.run_task(self.load_data)
+
+    def _waiting(self) -> list[ft.Control] | None:  # propio
+        """Mientras cargan las tablas (o si falló la conexión)."""
+        if self.tablas is None:
+            texto = ("Conectando con el servidor…" if self.base.es_servidor else "Abriendo…")
+            return [ft.ProgressBar(), ft.Text(texto, size=12, color=ft.Colors.OUTLINE)]
+        if self.error_tablas:
+            return [ft.Container(
+                padding=10, border_radius=8, bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.RED),
+                content=ft.Text(self.error_tablas, color=ft.Colors.RED, selectable=True)),
+                ft.TextButton("Reintentar", icon=ft.Icons.REFRESH,
+                              on_click=lambda e: self.retry())]
+        return None
+
+    def retry(self):  # propio
+        self.tablas, self.error_tablas = None, ""
+        self.refresh()
+        self.page.run_task(self.load_tables)
 
     def _render(self):  # propio
+        cuantas = "…" if self.tablas is None else len(self.tablas)
         self.fila_pestanas.content = tabs_row(
-            [("tablas", f"Tablas ({len(self.tablas)})"), ("datos", "Datos"), ("sql", "SQL")],
+            [("tablas", f"Tablas ({cuantas})"), ("datos", "Datos"), ("sql", "SQL")],
             self.pestana, self.set_tab)
         if self.pestana == "datos":
             self.cuerpo.controls = self._data_tab()
@@ -122,12 +169,15 @@ class DatabaseView:
     # Tablas
     # ==================================================================
     def _tables_tab(self) -> list[ft.Control]:  # propio
+        if (espera := self._waiting()) is not None:
+            return espera
         if not self.tablas:
             return [ft.Text("Esta base no tiene tablas.", italic=True, color=ft.Colors.OUTLINE)]
         controles = []
         for t in self.tablas:
             abierta = t.nombre == self.expandida
-            filas = "?" if t.filas is None else f"{t.filas:,} fila{'s' if t.filas != 1 else ''}"
+            filas = "?" if t.filas is None else (
+                ("~" if t.aproximado else "") + f"{t.filas:,} fila{'s' if t.filas != 1 else ''}")
             controles.append(ft.Container(
                 ink=True, border_radius=8, padding=ft.Padding.symmetric(horizontal=6, vertical=8),
                 on_click=lambda e, n=t.nombre: self.toggle_schema(n),
@@ -144,10 +194,11 @@ class DatabaseView:
         return controles
 
     def _schema(self, t: services.Tabla) -> ft.Control:  # propio
-        try:
-            e = services.schema(self.base, t.nombre)
-        except Exception as ex:  # noqa: BLE001
-            return ft.Text(str(ex), color=ft.Colors.RED)
+        e = self.esquemas.get(t.nombre)
+        if e is None:
+            return ft.Container(margin=ft.Margin.only(left=30), content=ft.ProgressBar())
+        if isinstance(e, str):
+            return ft.Text(e, color=ft.Colors.RED)
         filas = []
         for c in e.columnas:
             marcas = []
@@ -185,20 +236,36 @@ class DatabaseView:
     def toggle_schema(self, nombre: str):  # propio
         self.expandida = None if self.expandida == nombre else nombre
         self.refresh()
+        if self.expandida and not self.esquemas.get(nombre):
+            self.page.run_task(self.load_schema, nombre)
+
+    async def load_schema(self, nombre: str):  # propio
+        base = self.base
+        try:
+            e = await asyncio.to_thread(services.schema, base, nombre)
+        except Exception as ex:  # noqa: BLE001
+            e = services.message(ex)
+        if base is self.base:
+            self.esquemas[nombre] = e
+            self._refresh_safe()
 
     def show_data(self, tabla: str):  # propio
         self.tabla, self.pagina, self.buscar = tabla, 0, ""
         self.txt_buscar.value = ""
+        self.datos = None
         self.set_tab("datos")
 
     def query_table(self, tabla: str):  # propio
-        self.txt_sql.value = f'SELECT * FROM "{tabla}" LIMIT 100;'
+        nombre = MOTORES[self.base.tipo]().qualify(tabla)
+        self.txt_sql.value = f"SELECT * FROM {nombre} LIMIT 100;"
         self.set_tab("sql")
 
     # ==================================================================
     # Datos
     # ==================================================================
     def _data_tab(self) -> list[ft.Control]:  # propio
+        if (espera := self._waiting()) is not None:
+            return espera
         if not self.tablas:
             return [ft.Text("Esta base no tiene tablas.", italic=True, color=ft.Colors.OUTLINE)]
         if self.tabla not in {t.nombre for t in self.tablas}:
@@ -206,19 +273,23 @@ class DatabaseView:
         self.dd_tabla.options = [ft.DropdownOption(key=t.nombre, text=t.nombre)
                                  for t in self.tablas]
         self.dd_tabla.value = self.tabla
-        try:
-            columnas, filas, total = services.page_rows(self.base, self.tabla, self.pagina,
-                                                        self.buscar)
-        except Exception as ex:  # noqa: BLE001
-            return [ft.Row([self.dd_tabla]), ft.Text(str(ex), color=ft.Colors.RED)]
+        if self.datos is None or self.cargando_datos:
+            return [ft.Row([self.dd_tabla]), ft.ProgressBar()]
+        if isinstance(self.datos, str):
+            return [ft.Row([self.dd_tabla]), ft.Text(self.datos, color=ft.Colors.RED,
+                                                     selectable=True)]
+        columnas, filas, total = self.datos
+        aprox = "~" if getattr(self.datos, "aproximado", False) else ""
         desde = self.pagina * services.POR_PAGINA
         hasta = desde + len(filas)
         def paginas() -> ft.Control:  # propio
             return ft.Row(alignment=ft.MainAxisAlignment.CENTER, controls=[
                 ft.IconButton(ft.Icons.CHEVRON_LEFT, disabled=self.pagina == 0,
                               on_click=lambda e: self.go_page(-1)),
-                ft.Text(f"{desde + 1 if filas else 0:,}–{hasta:,} de {total:,}"),
-                ft.IconButton(ft.Icons.CHEVRON_RIGHT, disabled=hasta >= total,
+                ft.Text(f"{desde + 1 if filas else 0:,}–{hasta:,} de {aprox}{total:,}"),
+                ft.IconButton(ft.Icons.CHEVRON_RIGHT,
+                              disabled=(len(filas) < services.POR_PAGINA if aprox
+                                        else hasta >= total),
                               on_click=lambda e: self.go_page(1)),
             ])
 
@@ -234,14 +305,31 @@ class DatabaseView:
             *([paginas()] if len(filas) > 15 else []),
         ]
 
+    async def load_data(self):  # propio
+        if not self.tablas:
+            return
+        if self.tabla not in {t.nombre for t in self.tablas}:
+            self.tabla = self.tablas[0].nombre
+        base, pedido = self.base, (self.tabla, self.pagina, self.buscar)
+        self.cargando_datos = True
+        self._refresh_safe()
+        try:
+            datos = await asyncio.to_thread(services.page_rows, base, *pedido)
+        except Exception as ex:  # noqa: BLE001
+            datos = services.message(ex)
+        if base is not self.base or pedido != (self.tabla, self.pagina, self.buscar):
+            return   # el usuario ya pidió otra cosa: esa carga manda
+        self.datos, self.cargando_datos = datos, False
+        self._refresh_safe()
+
     def _on_table(self, e):  # propio
         self.tabla, self.pagina, self.buscar = e.control.value, 0, ""
         self.txt_buscar.value = ""
-        self.refresh()
+        self.page.run_task(self.load_data)
 
     def _on_search(self, e):  # propio
         self.buscar, self.pagina = self.txt_buscar.value or "", 0
-        self.refresh()
+        self.page.run_task(self.load_data)
 
     def _clear_search(self, e):  # propio
         self.txt_buscar.value = ""
@@ -249,7 +337,7 @@ class DatabaseView:
 
     def go_page(self, delta: int):  # propio
         self.pagina = max(0, self.pagina + delta)
-        self.refresh()
+        self.page.run_task(self.load_data)
 
     # ==================================================================
     # SQL
@@ -304,9 +392,11 @@ class DatabaseView:
         if editable and not services.is_read_only(sql):
             def ok():  # propio
                 self.page.run_task(self._execute, sql)
+            donde = (f"el SERVIDOR real de «{self.base.nombre}»" if self.base.es_servidor
+                     else f"la copia de «{self.base.nombre}» en la app")
             confirm(self.page, "¿Ejecutar cambios?",
-                    f"Esto modifica la copia de «{self.base.nombre}» en la app. Si falla una "
-                    "sentencia, no se aplica ninguna.", ok, boton="Ejecutar")
+                    f"Esto modifica {donde}. Si falla una sentencia, no se aplica ninguna.",
+                    ok, boton="Ejecutar")
             return
         await self._execute(sql)
 
@@ -318,8 +408,9 @@ class DatabaseView:
         finally:
             self.ejecutando = False
         if not self.resultado.error and not self.resultado.columnas:
-            self.tablas = services.tables(self.base)  # pudo cambiar (CREATE/DROP/INSERT)
-        self.refresh()
+            self.datos, self.esquemas = None, {}
+            self.page.run_task(self.load_tables)  # pudo cambiar (CREATE/DROP/INSERT)
+        self._refresh_safe()
 
     async def export_csv(self):  # propio
         r = self.resultado

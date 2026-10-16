@@ -11,10 +11,11 @@ Panel de un servidor (/kraken/ssh/panel): se actualiza cada 5 s MIENTRAS lo ves.
   Red      bajada 1.2 MB/s · subida 80 KB/s
   Servicios (odoo: activo) (postgresql: activo) (nginx: apagado)
   Procesos que más consumen…
-  [▶ Comandos]  [📄 Logs]
+  [▶ Comandos]  [Consola]  [📄 Logs]
 
 "Mientras lo ves" de verdad:
   - al salir de la pantalla, el ciclo se detiene y se cierra la conexión
+  - si abres Consola o Logs encima, también se pausa (no se ve: no se lee)
   - si la app pasa a segundo plano (otra app, pantalla apagada), se pausa
     (page.on_app_lifecycle_state_change) y al volver lee al instante
 
@@ -76,10 +77,11 @@ class _Vistazo:
 
 
 class PanelView:
-    def __init__(self, page: ft.Page, on_logs):
-        """on_logs(equipo, sesion=None): abre la pantalla de logs."""
+    def __init__(self, page: ft.Page, on_logs, on_console):
+        """on_logs(equipo) / on_console(equipo): abren Logs y Consola encima del panel."""
         self.page = page
         self.on_logs = on_logs
+        self.on_console = on_console
         self.equipo: Equipo | None = None
         self.sesion: Sesion | None = None
         self.muestras: list[metricas.Muestra] = []
@@ -142,6 +144,10 @@ class PanelView:
         if callable(self._lifecycle_anterior):
             self._lifecycle_anterior(e)
 
+    def wake(self):  # propio
+        """Volviste al panel (desde Consola o Logs): leer ya."""
+        self._despertar.set()
+
     def retry(self, e=None):  # propio
         self.error = None
         self._render()
@@ -155,8 +161,8 @@ class PanelView:
     async def _loop(self):  # propio
         self._tarea = asyncio.current_task()
         while self.activo and self.error is None:
-            if self.pausado:
-                await self._wait(3600)
+            if self.pausado or self.page.route != routes.SSH_PANEL:
+                await self._wait(3600)   # wake() al volver al panel
                 continue
             await self._read_once()
             if self.activo and self.error is None:
@@ -385,6 +391,8 @@ class PanelView:
     def _actions(self) -> ft.Control:  # propio
         return ft.Row(wrap=True, spacing=8, controls=[
             ft.FilledButton("Comandos", icon=ft.Icons.PLAY_ARROW, on_click=self.open_commands),
+            ft.FilledTonalButton("Consola", icon=ft.Icons.TERMINAL,
+                                 on_click=lambda e: self.on_console(self.equipo)),
             ft.OutlinedButton("Logs", icon=ft.Icons.ARTICLE,
                               on_click=lambda e: self.on_logs(self.equipo)),
         ])

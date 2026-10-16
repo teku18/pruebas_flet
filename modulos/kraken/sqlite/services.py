@@ -1,20 +1,19 @@
 """
-Lógica del explorador SQLite (el "cocinero"):
+Lógica del explorador de bases (el "cocinero"). Sirve igual para SQLite,
+PostgreSQL y MySQL: lo que cambia entre ellos vive en motores.py.
 
   databases()      la de ControlKraken (siempre arriba) + las que agregaste
   add_database()   copia un .db a data/kraken/bases/ y lo registra
+  save_server()    alta/edición de un servidor PostgreSQL o MySQL
+  test_server()    "Probar conexión": versión del servidor y sus bases de datos
   tables()         tablas y vistas con su número de filas
   schema()         columnas, llaves, índices y el CREATE de una tabla
   page_rows()      filas de 50 en 50 (con búsqueda en todas las columnas)
   run()            ejecuta tu SQL y lo anota en el historial de esa base
   to_csv()         un resultado -> CSV que abre Excel
 
-Solo lectura de verdad: la conexión se abre con  file:…?mode=ro  (SQLite
-mismo rechaza cualquier escritura: "attempt to write a readonly database").
-La BD de ControlKraken SIEMPRE se abre así, además con PRAGMA query_only.
-
-Se usa sqlite3 (viene con Python) y no SQLAlchemy: aquí no hay modelos, son
-bases cualesquiera.
+Solo lectura de verdad: la hace cumplir la propia base (motores.py). La BD de
+ControlKraken SIEMPRE se abre así.
 """
 import csv
 import io
@@ -28,12 +27,18 @@ from sqlalchemy import delete, select
 from core.database import DB_PATH, SessionLocal
 from core.storage import save_file
 from modulos.kraken.models import BASES_DIR, ConexionSqlite, ConsultaSqlite
+from modulos.kraken.models.sqlite import PUERTOS, TIPOS
+from modulos.kraken.sqlite import motores
+from modulos.kraken.sqlite.motores import (POR_PAGINA, Columna, Esquema, Pagina, Tabla,
+                                           message)
 
-POR_PAGINA = 50
+# Las pantallas y las pruebas los usan como services.Tabla, services.POR_PAGINA…
+__all__ = ["APP", "POR_PAGINA", "BaseInfo", "Columna", "Esquema", "Pagina", "Tabla"]
+
 MAX_FILAS = 1000            # filas de un resultado de SQL que se traen a la pantalla
 HISTORIAL_POR_BASE = 100    # consultas recientes por base (las favoritas no cuentan)
 ENCABEZADO = b"SQLite format 3\x00"
-LECTURA = ("SELECT", "WITH", "PRAGMA", "EXPLAIN", "VALUES")
+LECTURA = ("SELECT", "WITH", "PRAGMA", "EXPLAIN", "VALUES", "SHOW", "DESCRIBE", "DESC")
 
 
 # ============================================================================
@@ -43,29 +48,47 @@ LECTURA = ("SELECT", "WITH", "PRAGMA", "EXPLAIN", "VALUES")
 class BaseInfo:
     id: int | None           # None = la BD de ControlKraken
     nombre: str
-    ruta: Path
+    ruta: Path | None
     solo_lectura: bool
     respaldar: bool
     origen: str | None = None
+    tipo: str = "sqlite"     # sqlite | postgres | mysql
+    host: str | None = None
+    puerto: int | None = None
+    base_datos: str | None = None
+    usuario: str | None = None
+    clave: str | None = None
+    ssh_equipo_id: int | None = None
 
     @property
     def es_app(self) -> bool:  # propio
         return self.id is None
 
     @property
+    def es_servidor(self) -> bool:  # propio
+        return self.tipo != "sqlite"
+
+    @property
     def existe(self) -> bool:  # propio
-        return self.ruta.is_file()
+        return self.es_servidor or bool(self.ruta and self.ruta.is_file())
 
     @property
     def tamano(self) -> int:  # propio
-        return self.ruta.stat().st_size if self.existe else 0
+        return self.ruta.stat().st_size if (not self.es_servidor and self.existe) else 0
+
+    @property
+    def destino(self) -> str:  # propio
+        """'odoo@localhost:5432/produccion' (para mostrar)."""
+        puerto = self.puerto or PUERTOS.get(self.tipo, "")
+        return f"{self.usuario}@{self.host}:{puerto}/{self.base_datos or '(sin base)'}"
 
 
 APP = BaseInfo(None, "ControlKraken (esta app)", DB_PATH, True, True)
 
 
 def _info(c: ConexionSqlite) -> BaseInfo:  # propio
-    return BaseInfo(c.id, c.nombre, c.ruta, c.solo_lectura, c.respaldar, c.origen)
+    return BaseInfo(c.id, c.nombre, c.ruta, c.solo_lectura, c.respaldar, c.origen, c.tipo,
+                    c.host, c.puerto, c.base_datos, c.usuario, c.clave, c.ssh_equipo_id)
 
 
 def databases() -> list[BaseInfo]:  # propio
@@ -98,102 +121,92 @@ def add_database(nombre_archivo: str, datos: bytes | None = None,  # propio
                                  origen=str(origen) if origen else nombre_archivo)
 
 
+def save_server(conexion_id: int | None, **valores) -> ConexionSqlite:  # propio
+    """Alta o edición de un servidor PostgreSQL/MySQL (nuevo = en solo lectura)."""
+    if valores.get("tipo") not in TIPOS or valores.get("tipo") == "sqlite":
+        raise ValueError("Elige PostgreSQL o MySQL")
+    for campo in ("nombre", "host", "base_datos", "usuario"):
+        if isinstance(valores.get(campo), str):
+            valores[campo] = valores[campo].strip() or None
+    if conexion_id is None:
+        valores.setdefault("solo_lectura", True)
+        return ConexionSqlite.create(respaldar=False, **valores)
+    return ConexionSqlite.update(conexion_id, **valores)
+
+
+@dataclass
+class Prueba:
+    ok: bool
+    mensaje: str
+    version: str = ""
+    bases: list[str] = field(default_factory=list)   # bases de datos del servidor
+
+
+def test_server(base: BaseInfo) -> Prueba:  # propio
+    """Conecta, dice la versión y lista las bases de datos (para elegir una)."""
+    inicio = time.perf_counter()
+    try:
+        semilla = base.base_datos or ("postgres" if base.tipo == "postgres" else None)
+        with motores.opened(base, semilla) as (con, motor):
+            cur = con.cursor()
+            cur.execute("SELECT version()")
+            version = str(cur.fetchone()[0]).split(" on ")[0].split(",")[0]
+            bases = motor.databases(con)
+    except Exception as ex:  # noqa: BLE001
+        return Prueba(False, friendly_connect_error(ex, base))
+    ms = round((time.perf_counter() - inicio) * 1000)
+    return Prueba(True, f"Conectado en {ms} ms", version, bases)
+
+
+def friendly_connect_error(ex: Exception, base: BaseInfo) -> str:  # propio
+    from modulos.kraken.ssh.conexion import HuellaCambio
+    if isinstance(ex, HuellaCambio):
+        return "La huella del servidor SSH cambió: ábrelo en SSH para revisarla"
+    texto = message(ex)
+    bajo = texto.lower()
+    via = " (por el túnel SSH)" if base.ssh_equipo_id else ""
+    if "password authentication failed" in bajo or "access denied" in bajo:
+        return f"Usuario o contraseña incorrectos{via}"
+    if ("does not exist" in bajo and "database" in bajo) or "unknown database" in bajo:
+        return f"No existe la base de datos «{base.base_datos}»"
+    causa = ex.__cause__ or ex.__context__
+    if isinstance(causa, TimeoutError) or isinstance(ex, TimeoutError):
+        return f"El servidor no contestó a tiempo{via}"
+    if (isinstance(ex, ConnectionRefusedError) or isinstance(causa, ConnectionRefusedError)
+            or "refused" in bajo or "can't connect" in bajo
+            or "can't create a connection" in bajo):
+        return (f"Nadie atiende en {base.host}:{base.puerto or PUERTOS.get(base.tipo)}{via}: "
+                "¿el servidor está encendido y escucha en ese puerto?")
+    if "timed out" in bajo or "timeout" in bajo:
+        return f"El servidor no contestó a tiempo{via}"
+    if "pg_hba.conf" in bajo:
+        return ("PostgreSQL no deja entrar desde aquí (pg_hba.conf). Usa un túnel SSH o "
+                "permite esta conexión en el servidor.")
+    return texto
+
+
 def connect(base: BaseInfo) -> sqlite3.Connection:  # propio
-    if not base.existe:
-        raise ValueError("El archivo de esta base no está en este equipo "
-                         "(se marcó «no respaldar» y vienes de otro equipo)")
-    if base.solo_lectura or base.es_app:
-        con = sqlite3.connect(f"{base.ruta.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
-        con.execute("PRAGMA query_only = 1")
-    else:
-        con = sqlite3.connect(base.ruta, timeout=5)
-    return con
-
-
-def _q(nombre: str) -> str:  # propio
-    """Nombre de tabla/columna entre comillas dobles (por si trae espacios o es palabra de SQL)."""
-    return '"' + nombre.replace('"', '""') + '"'
+    """Conexión directa a un SQLite (la usa "Descargar copia")."""
+    return motores.Sqlite().connect(base)
 
 
 # ============================================================================
 # Tablas y esquema
 # ============================================================================
-@dataclass
-class Tabla:
-    nombre: str
-    tipo: str          # "table" | "view"
-    filas: int | None  # None si no se pudo contar (vista rota, etc.)
-
-
 def tables(base: BaseInfo) -> list[Tabla]:  # propio
-    con = connect(base)
-    try:
-        nombres = con.execute(
-            "SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') "
-            "AND name NOT LIKE 'sqlite_%' ORDER BY type, name").fetchall()
-        resultado = []
-        for nombre, tipo in nombres:
-            try:
-                filas = con.execute(f"SELECT COUNT(*) FROM {_q(nombre)}").fetchone()[0]
-            except sqlite3.Error:
-                filas = None
-            resultado.append(Tabla(nombre, tipo, filas))
-        return resultado
-    finally:
-        con.close()
-
-
-@dataclass
-class Columna:
-    nombre: str
-    tipo: str
-    obligatoria: bool
-    defecto: str | None
-    llave: bool                 # parte de la llave primaria
-    apunta_a: str | None = None  # "proyectos.id" si es llave foránea
-
-
-@dataclass
-class Esquema:
-    columnas: list[Columna]
-    indices: list[tuple[str, bool, list[str]]]   # (nombre, único, columnas)
-    sql: str
+    with motores.opened(base) as (con, motor):
+        return motor.tables(con)
 
 
 def schema(base: BaseInfo, tabla: str) -> Esquema:  # propio
-    con = connect(base)
-    try:
-        foraneas = {f[3]: f"{f[2]}.{f[4]}" for f in
-                    con.execute(f"PRAGMA foreign_key_list({_q(tabla)})").fetchall()}
-        columnas = [Columna(c[1], c[2] or "", bool(c[3]), c[4], bool(c[5]), foraneas.get(c[1]))
-                    for c in con.execute(f"PRAGMA table_info({_q(tabla)})").fetchall()]
-        indices = []
-        for i in con.execute(f"PRAGMA index_list({_q(tabla)})").fetchall():
-            cols = [x[2] for x in con.execute(f"PRAGMA index_info({_q(i[1])})").fetchall()]
-            indices.append((i[1], bool(i[2]), cols))
-        fila = con.execute("SELECT sql FROM sqlite_master WHERE name = ?", (tabla,)).fetchone()
-        return Esquema(columnas, indices, (fila[0] if fila else "") or "")
-    finally:
-        con.close()
+    with motores.opened(base) as (con, motor):
+        return motor.schema(con, tabla)
 
 
-def page_rows(base: BaseInfo, tabla: str, pagina: int = 0,  # propio
-              buscar: str = "") -> tuple[list[str], list[tuple], int]:
-    """(columnas, filas de esa página, total que cumplen la búsqueda)."""
-    con = connect(base)
-    try:
-        columnas = [c[1] for c in con.execute(f"PRAGMA table_info({_q(tabla)})").fetchall()]
-        donde, args = "", []
-        if buscar.strip() and columnas:
-            donde = " WHERE " + " OR ".join(f"CAST({_q(c)} AS TEXT) LIKE ?" for c in columnas)
-            args = [f"%{buscar.strip()}%"] * len(columnas)
-        total = con.execute(f"SELECT COUNT(*) FROM {_q(tabla)}{donde}", args).fetchone()[0]
-        cursor = con.execute(f"SELECT * FROM {_q(tabla)}{donde} LIMIT ? OFFSET ?",
-                             [*args, POR_PAGINA, pagina * POR_PAGINA])
-        columnas = [d[0] for d in cursor.description]
-        return columnas, cursor.fetchall(), total
-    finally:
-        con.close()
+def page_rows(base: BaseInfo, tabla: str, pagina: int = 0, buscar: str = "") -> Pagina:  # propio
+    """(columnas, filas de esa página, total que cumplen la búsqueda); .aproximado si se estimó."""
+    with motores.opened(base) as (con, motor):
+        return motores.page(con, motor, tabla, pagina, buscar)
 
 
 # ============================================================================
@@ -240,8 +253,8 @@ class ResultadoSql:
 def run(base: BaseInfo, sql: str, guardar: bool = True) -> ResultadoSql:  # propio
     """
     Ejecuta una o varias sentencias. Muestra el resultado de la ÚLTIMA que
-    regresa filas. En una base editable, todo va en una transacción: si una
-    falla, no se aplica ninguna.
+    regresa filas. Todo va en una transacción: si una falla, no se aplica
+    ninguna (en MySQL, CREATE/ALTER/DROP se aplican al momento: así es MySQL).
     """
     r = ResultadoSql()
     sentencias = split_statements(sql)
@@ -250,39 +263,44 @@ def run(base: BaseInfo, sql: str, guardar: bool = True) -> ResultadoSql:  # prop
         return r
     inicio = time.perf_counter()
     try:
-        con = connect(base)
-    except (ValueError, sqlite3.Error) as ex:
-        r.error = str(ex)
-        return r
-    try:
-        for s in sentencias:
-            cursor = con.execute(s)
-            r.sentencias += 1
-            if cursor.description:
-                r.columnas = [d[0] for d in cursor.description]
-                r.filas = cursor.fetchmany(MAX_FILAS + 1)
-                r.hay_mas = len(r.filas) > MAX_FILAS
-                r.filas = r.filas[:MAX_FILAS]
-            elif cursor.rowcount and cursor.rowcount > 0:
-                r.cambios += cursor.rowcount
-        con.commit()
-    except sqlite3.Error as ex:
-        con.rollback()
-        r.error = _friendly_error(ex, base)
-    finally:
-        con.close()
+        with motores.opened(base) as (con, motor):
+            try:
+                cur = con.cursor()
+                for s_ in sentencias:
+                    cur.execute(s_.rstrip(";") if base.es_servidor else s_)
+                    r.sentencias += 1
+                    if cur.description:
+                        r.columnas = [d[0] for d in cur.description]
+                        filas = cur.fetchmany(MAX_FILAS + 1)
+                        r.hay_mas = len(filas) > MAX_FILAS
+                        r.filas = [tuple(f) for f in filas[:MAX_FILAS]]
+                    elif cur.rowcount and cur.rowcount > 0:
+                        r.cambios += cur.rowcount
+                con.commit()
+            except Exception as ex:  # noqa: BLE001  (cada librería tiene sus errores)
+                try:
+                    con.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                r.error = _friendly_error(ex, base, motor)
+    except Exception as ex:  # noqa: BLE001  (no se pudo ni conectar)
+        r.error = friendly_connect_error(ex, base) if base.es_servidor else message(ex)
     r.tiempo_ms = round((time.perf_counter() - inicio) * 1000)
     if guardar:
         _record(base, sql, r)
     return r
 
 
-def _friendly_error(ex: sqlite3.Error, base: BaseInfo) -> str:  # propio
-    texto = str(ex)
-    if "readonly" in texto or "query_only" in texto or "attempt to write" in texto:
+def _friendly_error(ex: Exception, base: BaseInfo, motor) -> str:  # propio
+    texto = message(ex)
+    if motor.is_read_only_error(texto):
         if base.es_app:
             return "La base de ControlKraken es de solo lectura (para no romper la app)."
-        return "Esta base está en solo lectura. Cámbialo en la lista de bases: menú de tres puntos, Permitir cambios."
+        return ("Esta base está en solo lectura. Cámbialo en la lista de bases: menú de tres "
+                "puntos, Permitir cambios.")
+    if "statement timeout" in texto.lower() or "max_statement_time" in texto.lower() \
+            or "maximum statement execution time" in texto.lower():
+        return f"La consulta tardó más de {motores.TIEMPO_MAX_S} s y se canceló (usa LIMIT o un WHERE)"
     return texto
 
 
@@ -331,6 +349,11 @@ def cell_text(valor, largo: int = 60) -> str:  # propio
     """Lo que se ve en una celda: NULL, <BLOB 12 KB> o el texto (recortado)."""
     if valor is None:
         return "NULL"
+    if isinstance(valor, memoryview):
+        valor = bytes(valor)
+    if isinstance(valor, (dict, list)):  # columnas JSON de Postgres (Odoo las usa)
+        import json
+        valor = json.dumps(valor, ensure_ascii=False)
     if isinstance(valor, bytes):
         from core.storage import human_size
         return f"<BLOB {human_size(len(valor))}>"

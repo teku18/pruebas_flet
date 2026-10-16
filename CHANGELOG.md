@@ -1,5 +1,46 @@
 # Cambios de ControlKraken
 
+## 1.8.0 — 2026-10-15
+
+### Nuevo
+- **Explorador de bases** (antes "Explorador SQLite"): además de archivos
+  SQLite, ahora **servidores PostgreSQL y MySQL/MariaDB**.
+  - "Agregar base" pregunta: Archivo SQLite, Servidor PostgreSQL o Servidor MySQL.
+  - Conexión **directa** o **por túnel SSH** a través de uno de tus servidores
+    de Kraken > SSH (no se abre ningún puerto: la base sigue escuchando solo
+    en el servidor).
+  - "Probar conexión" dice la versión y lista las bases para elegir una.
+  - Tablas (con esquemas de PostgreSQL: `ventas.pedidos`), columnas, llaves,
+    índices, datos por páginas con búsqueda y SQL libre con CSV.
+  - **Solo lectura de verdad**: lo impone el propio servidor (no solo la app).
+    "Permitir cambios" lo quita, con confirmación antes de cada cambio.
+  - Cada consulta tiene **30 s** como máximo; el servidor la corta si tarda más.
+  - Todo carga en segundo plano: un servidor lento ya no congela la pantalla.
+  - Tablas enormes: conteo aproximado (~) para no tardar minutos.
+  - Usuario y contraseña en texto normal y en el respaldo, como todo Kraken.
+- **Consola SSH** (botón "Consola" en el panel del servidor): escribe
+  **cualquier comando**, como desde una terminal de otra PC.
+  - Recuerda la carpeta (`cd` funciona entre comandos).
+  - `sudo` en cualquier parte del comando usa la contraseña guardada (y nunca
+    se le pasa al comando: `sudo tee` no la escribe en el archivo).
+  - Salida en vivo, **Ctrl+C** para cortar, **Tab** para completar archivos y
+    comandos, flechas para repetir comandos anteriores (también con el teclado
+    de la PC) y botones con comandos frecuentes.
+  - vim, nano, htop, top, less… no se pueden (no hay pantalla de terminal):
+    avisa qué usar en su lugar.
+  - Cada comando queda en el historial de Red.
+
+### Cambios
+- El panel del servidor se **pausa** mientras tienes Logs o Consola encima
+  (no se ve, no se lee) y lee al instante al volver.
+- Migración 0019: `kt_sqlite_conexiones` suma tipo, host, puerto, base de
+  datos, usuario, contraseña y servidor SSH. Respaldo: 31 tablas.
+- Dependencias nuevas (puro Python): `pg8000==1.31.5` (con `scramp`,
+  `asn1crypto`, `python-dateutil`, `six`) y `pymysql==1.2.3`.
+- `verificar_kraken.py` prueba PostgreSQL y MySQL reales si defines
+  `CK_TEST_PG` / `CK_TEST_MYSQL` (`host:puerto:usuario:clave`), el túnel SSH y
+  la consola (cd, sudo, salida en vivo, Ctrl+C, Tab).
+
 ## 1.7.0 — 2026-10-15
 
 ### Nuevo
