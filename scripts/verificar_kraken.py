@@ -797,6 +797,12 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
     bin_dir = Path(tempfile.mkdtemp())
     (bin_dir / "sudo").write_text(SUDO_FALSO)
     (bin_dir / "sudo").chmod(0o755)
+    # crontab de prueba: guarda en un archivo (no toca el crontab real de esta máquina)
+    (bin_dir / "crontab").write_text('#!/bin/bash\nf="$HOME/.crontab_prueba"\n'
+                                     'if [ "$1" = "-l" ]; then cat "$f" 2>/dev/null; '
+                                     'else cat > "$f"; fi\n')
+    (bin_dir / "crontab").chmod(0o755)
+    casa = Path(tempfile.mkdtemp(prefix="ck_home_"))   # el HOME del "servidor"
     llave = paramiko.RSAKey.generate(2048)  # cada servidor falso: su propia llave
 
     class Srv(paramiko.ServerInterface):
@@ -835,7 +841,8 @@ def start_ssh(usuario: str = "edgar", clave: str = "secreto") -> int:  # propio
                 continue
             srv.listo.wait(5)
             srv.listo.clear()
-            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", TMPDIR=str(bin_dir))
+            env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", TMPDIR=str(bin_dir),
+                       HOME=str(casa))
             proc = subprocess.Popen(["bash", "-c", srv.cmd], stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
             ch.settimeout(0.3)
@@ -1048,6 +1055,108 @@ def test_console():  # propio
     Equipo.delete(e.id)
 
 
+def test_webhooks():  # propio
+    """Receptor real (python3) instalado por SSH en el "servidor" de prueba."""
+    import socket
+
+    import httpx
+
+    from modulos.kraken.models import Equipo, Receptor, WebhookRecibido
+    from modulos.kraken.ssh.conexion import Sesion
+    from modulos.kraken.webhooks import servicio
+
+    print("Webhooks")
+    puerto_ssh = start_ssh()
+    e = Equipo.create(nombre="Servidor webhooks", host="127.0.0.1", ssh_usuario="edgar",
+                      ssh_puerto=puerto_ssh, ssh_clave="secreto")
+    with socket.socket() as s_:
+        s_.bind(("127.0.0.1", 0))
+        libre = s_.getsockname()[1]
+    try:
+        Receptor.create(nombre="X", equipo_id=e.id, puerto=80)
+        check(False, "puerto 80 aceptado")
+    except ValueError:
+        check(True, "rechaza puertos < 1024 (sin root)")
+    r = Receptor.create(nombre="Stripe pruebas", equipo_id=e.id, puerto=libre, max_guardados=10)
+    check(len(r.clave) >= 20, f"clave secreta en la URL: {r.url('host')}")
+    with Sesion(e) as ses:
+        check(not servicio.status(ses, r).instalado, "antes de instalar: no instalado")
+        estado = servicio.install(ses, r)
+        check(estado.activo and Receptor.get(r.id).instalado, f"instala e inicia: {estado.texto}")
+        cron = ses.run("crontab -l").texto
+        check(f"ck-webhook-{r.clave}" in cron and "@reboot" in cron,
+              "queda en crontab @reboot (vuelve solo si reinicia el servidor)")
+        servicio.install(ses, Receptor.get(r.id))
+        check(ses.run("crontab -l").texto.count("@reboot") == 1, "reinstalar no duplica crontab")
+        url = r.url("127.0.0.1")
+        resp = httpx.post(url + "/pagos?x=1", json={"evento": "pago", "monto": 10},
+                          headers={"X-Firma": "abc"})
+        check(resp.status_code == 200 and resp.json() == {"ok": True},
+              "responde 200 {\"ok\": true}")
+        check(httpx.get(f"http://127.0.0.1:{libre}/otra-cosa").status_code == 404,
+              "otra ruta: 404 y no se guarda")
+        httpx.put(url, content=b"\xff\x00\x01", headers={"Content-Type": "application/octet-stream"})
+        httpx.post(url, data={"a": "1", "b": "dos"})
+        n = servicio.fetch(ses, r)
+        lista = WebhookRecibido.of(r.id)
+        check(n == 3 and len(lista) == 3, f"trae lo nuevo: {n}")
+        pago = next(w for w in lista if w.ruta == "/pagos")
+        check(pago.metodo == "POST" and pago.query == "x=1" and json.loads(pago.body)["monto"] == 10
+              and ["X-Firma", "abc"] in pago.headers and pago.ip == "127.0.0.1",
+              "método, ruta, query, headers, body e IP")
+        binario = next(w for w in lista if w.metodo == "PUT")
+        check(binario.es_base64 and binario.tamano == 3, "body binario: en base64")
+        check(servicio.fetch(ses, Receptor.get(r.id)) == 0, "segunda lectura: nada repetido")
+        b = servicio.to_draft(pago)
+        check(b.body_tipo == "json" and b.params == [{"clave": "x", "valor": "1", "activo": True}]
+              and not any(h["clave"].lower() == "host" for h in b.headers),
+              "a Cliente HTTP: JSON, params y sin headers de transporte")
+        form = next(w for w in lista if w.metodo == "POST" and w.ruta == "/")
+        check(servicio.to_draft(form).form[1] == {"clave": "b", "valor": "dos", "activo": True},
+              "a Cliente HTTP: formulario")
+        for k in range(12):
+            httpx.post(url, json={"k": k})
+        servicio.fetch(ses, Receptor.get(r.id))
+        check(len(WebhookRecibido.of(r.id)) == 10, "guarda solo los últimos 10 (configurable)")
+        ok, texto = servicio.test_send(Receptor.get(r.id), "127.0.0.1")
+        check(ok, f"probar desde el cel: {texto}")
+        Receptor.update(r.id, status=202, respuesta="recibido")
+        servicio.apply(ses, Receptor.get(r.id))
+        resp = httpx.post(url, content=b"x")
+        check(resp.status_code == 202 and resp.text == "recibido"
+              and resp.headers["content-type"].startswith("text/plain"),
+              "editar la respuesta: reinicia con 202 «recibido»")
+        estado = servicio.stop(ses, Receptor.get(r.id))
+        check(estado.instalado and not estado.activo, "detener")
+        ok, texto = servicio.test_send(Receptor.get(r.id), "127.0.0.1")
+        check(not ok and "rechaza" in texto, f"detenido, probar lo explica: {texto[:50]}…")
+        check(servicio.start(ses, Receptor.get(r.id)).activo, "volver a iniciar")
+        n_antes = WebhookRecibido.unseen(r.id)
+        httpx.post(url, content=b"y")
+        servicio.fetch(ses, Receptor.get(r.id))
+        check(WebhookRecibido.unseen(r.id) >= 1 and n_antes >= 1, "cuenta los no vistos")
+        servicio.mark_seen(Receptor.get(r.id))
+        check(WebhookRecibido.unseen(r.id) == 0, "marcar vistos")
+        # Otro receptor en el MISMO puerto: el log lo explica
+        otro = Receptor.create(nombre="Choca", equipo_id=e.id, puerto=libre)
+        try:
+            servicio.install(ses, otro)
+            check(False, "dos receptores en el mismo puerto")
+        except ValueError as ex:
+            check("ocupado" in str(ex), f"puerto ocupado: {ex}")
+        servicio.uninstall(ses, otro)
+        servicio.uninstall(ses, Receptor.get(r.id))
+        check(not servicio.status(ses, r).instalado and "ck-webhook" not in ses.run(
+            "crontab -l").texto, "desinstalar: sin carpeta ni crontab")
+        try:
+            httpx.post(url, content=b"z", timeout=2)
+            check(False, "sigue escuchando tras desinstalar")
+        except httpx.ConnectError:
+            check(True, "desinstalado: ya no escucha")
+    Receptor.delete(r.id)
+    check(not WebhookRecibido.of(r.id), "borrar el receptor borra lo recibido")
+
+
 def prepare_server_db(tipo: str, host, puerto, usuario, clave) -> str:  # propio
     """Crea kraken_prueba_<tipo> con clientes (120), pedidos (30, FK) y una vista."""
     nombre = f"kraken_prueba_{tipo}"
@@ -1195,6 +1304,7 @@ def main() -> int:  # propio
     test_red(base)
     test_ssh()
     test_console()
+    test_webhooks()
     test_server_db("postgres", "CK_TEST_PG")
     test_server_db("mysql", "CK_TEST_MYSQL")
     print()

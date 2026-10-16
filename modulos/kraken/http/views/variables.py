@@ -68,6 +68,7 @@ class VariableAssist:
         self.campos.append(c)
         self._paint(c)
         return ft.Column(spacing=2, expand=campo.expand if expand is None else expand,
+                         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                          controls=[campo, c.sugerencias, c.caja_colores])
 
     def forget(self, grupo: str):  # propio

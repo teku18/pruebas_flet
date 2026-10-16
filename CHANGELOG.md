@@ -1,5 +1,34 @@
 # Cambios de ControlKraken
 
+## 1.9.0 — 2026-10-15
+
+### Nuevo
+- **Kraken Tools · Webhooks** (la tarjeta "Webhooks" ya funciona): recibe
+  webhooks de Stripe, GitHub, Odoo, Mercado Pago… en uno de tus servidores.
+  - **Receptor en tu servidor**: eliges un servidor SSH y un puerto; con
+    "Instalar en el servidor" Kraken copia ahí un receptor pequeño (Python sin
+    dependencias) y te da la URL: `http://servidor:9555/<clave-secreta>`.
+  - Guarda todo **aunque el cel esté apagado**; vuelve solo si el servidor se
+    reinicia (`crontab @reboot`, sin root).
+  - Lo que llega a otra ruta responde 404 y no se guarda (los robots que
+    escanean internet no llenan tu lista).
+  - **Ver lo recibido**: método, ruta, query, hora, tamaño e IP; los nuevos
+    marcados. Tocar uno: body (JSON bonito), headers, "Copiar body" y **"Abrir
+    en Cliente HTTP"** para reenviarlo a donde quieras.
+  - Se lee cada 5 s **solo mientras ves la pantalla** (se pausa en segundo
+    plano y se detiene al salir).
+  - **Probar**: manda un webhook desde el cel a la URL pública; si no llega,
+    explica si es el firewall o si el receptor está detenido.
+  - **Abrir el puerto (ufw)**, Iniciar/Detener, Editar (qué responde: código y
+    cuerpo; cuántos guardar), Limpiar, Desinstalar del servidor y Eliminar.
+  - Lo recibido se guarda en tu BD y entra al respaldo.
+
+### Cambios
+- Cliente HTTP: el campo del body vuelve a ocupar todo el ancho.
+- Migración 0020: tablas `kt_webhooks` y `kt_webhooks_recibidos`. Respaldo: 33 tablas.
+- `verificar_kraken.py` instala un receptor real por SSH, le manda webhooks,
+  los trae, cambia la respuesta, lo detiene y lo desinstala.
+
 ## 1.8.2 — 2026-10-15
 
 ### Nuevo

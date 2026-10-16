@@ -14,6 +14,9 @@ Navegación (encima de la pantalla de inicio):
   /kraken/ssh               -> tus servidores SSH
   /kraken/ssh/panel         -> un servidor en vivo (cada 5 s) + comandos
   /kraken/ssh/logs          -> leer un log del servidor
+  /kraken/ssh/consola       -> escribir cualquier comando
+  /kraken/webhooks          -> tus receptores de webhooks
+  /kraken/webhooks/receptor -> un receptor: URL y lo recibido (lee cada 5 s)
 
 Capas (cada herramienta en su carpeta, para sumar Red, SSH y Webhooks):
   models/          tablas kt_* (todo en la BD y en el respaldo)
@@ -21,6 +24,7 @@ Capas (cada herramienta en su carpeta, para sumar Red, SSH y Webhooks):
   sqlite/          services.py (sqlite3, solo lectura, CSV) + views/
   red/             un archivo por prueba (ping.py, puertos.py…) + views/
   ssh/             conexion.py (paramiko), metricas.py, acciones.py + views/
+  webhooks/        receptor.py (lo que corre en tu servidor), servicio.py + views/
   herramientas.py  las tarjetas del inicio
   comun.py         piezas de pantalla compartidas
 """
@@ -32,7 +36,7 @@ from modulos.kraken import routes
 
 class KrakenModule(AppModule):
     nombre = "Kraken Tools"
-    descripcion = "HTTP, bases de datos, red y SSH"
+    descripcion = "HTTP, bases de datos, red, SSH y webhooks"
     icono = ft.Icons.HANDYMAN
     route = routes.BASE
 
@@ -43,6 +47,7 @@ class KrakenModule(AppModule):
         from modulos.kraken.sqlite.views import DatabaseView, DatabasesView
         from modulos.kraken.ssh.views import ConsoleView, LogsView, PanelView, ServersView
         from modulos.kraken.views import KrakenHome
+        from modulos.kraken.webhooks.views import ReceiversView, ReceiverView
 
         self.inicio = KrakenHome(page)
         # HTTP:  lista --tocar--> editor  ·  editor --salir--> lista.load
@@ -62,6 +67,10 @@ class KrakenModule(AppModule):
         self.consola = ConsoleView(page)
         self.panel = PanelView(page, on_logs=self.logs.open, on_console=self.consola.open)
         self.servidores = ServersView(page, on_open=self.panel.open)
+        # Webhooks: receptores --tocar--> uno (lee cada 5 s) --webhook--> Cliente HTTP
+        self.receptor = ReceiverView(page, on_to_http=lambda b: self.editor.open_new(borrador=b),
+                                     on_deleted=lambda: page.navigate(routes.WEBHOOKS))
+        self.receptores = ReceiversView(page, on_open=self.receptor.open)
 
     def _open_history(self, h):  # propio
         if h.herramienta == "ssh":  # lo de SSH se ve en un diálogo (no es una prueba de Red)
@@ -112,6 +121,15 @@ class KrakenModule(AppModule):
                 if route != routes.SSH:  # se recargó la app: no hay servidor abierto
                     self.page.route = routes.SSH
                 self.servidores.load()
+        elif route.startswith(routes.WEBHOOKS):
+            vistas.append(self.receptores.vista)
+            if route == routes.WEBHOOK and self.receptor.activo:
+                vistas.append(self.receptor.vista)
+                self.receptor.wake()
+            else:
+                if route != routes.WEBHOOKS:
+                    self.page.route = routes.WEBHOOKS
+                self.receptores.load()
         elif route.startswith(routes.SQLITE):
             vistas.append(self.bases.vista)
             if route == routes.SQLITE_BASE and self.base.activa:
@@ -139,6 +157,9 @@ class KrakenModule(AppModule):
                                else routes.RED)
         elif route == routes.RED_HISTORIAL:
             self.page.navigate(routes.RED)
+        elif route == routes.WEBHOOK:
+            self.receptor.close()  # deja de preguntar al servidor
+            self.page.navigate(routes.WEBHOOKS)
         elif route == routes.SSH_CONSOLA:
             self.consola.close()
             self.page.navigate(routes.SSH_PANEL if self.panel.activo else routes.SSH)
@@ -148,7 +169,7 @@ class KrakenModule(AppModule):
         elif route == routes.SSH_PANEL:
             self.panel.close()  # detiene el ciclo de 5 s y cierra la conexión
             self.page.navigate(routes.SSH)
-        elif route in (routes.HTTP, routes.SQLITE, routes.RED, routes.SSH):
+        elif route in (routes.HTTP, routes.SQLITE, routes.RED, routes.SSH, routes.WEBHOOKS):
             self.page.navigate(routes.BASE)
         else:
             self.page.navigate("/")

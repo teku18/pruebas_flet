@@ -30,6 +30,6 @@ HERRAMIENTAS = [
                 ft.Colors.TEAL, routes.RED),
     Herramienta("SSH", "Recursos de tus servidores y comandos", ft.Icons.TERMINAL,
                 ft.Colors.PURPLE, routes.SSH),
-    Herramienta("Webhooks", "Recibir y ver peticiones", ft.Icons.WEBHOOK, ft.Colors.PINK,
-                listo=False),
+    Herramienta("Webhooks", "Recibir y ver peticiones en tu servidor", ft.Icons.WEBHOOK,
+                ft.Colors.PINK, routes.WEBHOOKS),
 ]

@@ -12,3 +12,5 @@ SSH = "/kraken/ssh"                      # tus servidores SSH
 SSH_PANEL = "/kraken/ssh/panel"         # recursos en vivo (cada 5 s) + comandos
 SSH_LOGS = "/kraken/ssh/logs"           # leer un log del servidor
 SSH_CONSOLA = "/kraken/ssh/consola"     # escribir cualquier comando (como una terminal)
+WEBHOOKS = "/kraken/webhooks"           # tus receptores
+WEBHOOK = "/kraken/webhooks/receptor"   # un receptor: URL y lo recibido

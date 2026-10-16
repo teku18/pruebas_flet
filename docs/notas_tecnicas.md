@@ -64,6 +64,7 @@ código** (para que lo abras y lo veas funcionando).
 | 51 | [Consola SSH sin terminal: carpeta, sudo y Ctrl+C](#51-consola-ssh-sin-terminal-carpeta-sudo-y-ctrlc) | `modulos/kraken/ssh/consola.py` |
 | 52 | [Postman: el formato Collection v2.1](#52-postman-el-formato-collection-v21) | `modulos/kraken/http/postman.py` |
 | 53 | [Variables de colores y autocompletar: cursor y TextSpan](#53-variables-de-colores-y-autocompletar-cursor-y-textspan) | `modulos/kraken/http/views/variables.py` |
+| 54 | [Webhooks: un receptor que vive en tu servidor](#54-webhooks-un-receptor-que-vive-en-tu-servidor) | `modulos/kraken/webhooks/` |
 
 ---
 
@@ -1447,6 +1448,52 @@ y recalcula las variables faltantes como si lo hubieras tecleado.
 `views/variables.py` (`VariableAssist`), `comun.py` (`KeyValueEditor(asistente=…)`).
 
 
+## 54. Webhooks: un receptor que vive en tu servidor
+
+**Qué es un webhook.** En vez de que tú preguntes "¿ya pagaron?" cada rato, el
+otro sistema (Stripe, GitHub, Odoo…) TE AVISA: hace una petición HTTP a una URL
+tuya cuando pasa algo. Para eso la URL debe ser pública y estar siempre
+encendida.
+
+**Por qué no en el cel.** El cel no tiene IP pública (está detrás del módem o
+de la red celular), cambia de red y la app no siempre está abierta. Tu servidor
+sí cumple todo. Así que:
+
+```
+Stripe ──POST──▶ servidor:9555/<clave> ──▶ recibidos.jsonl
+                                              ▲
+             app ──SSH (cada 5 s mientras la ves)──┘  "dame lo que pase del id 41"
+```
+
+**El receptor** (`webhooks/receptor.py`, constante `SCRIPT`) es un
+`ThreadingHTTPServer` de la librería estándar: no hay que instalar nada en el
+servidor más que python3. Cada webhook es UN renglón JSON en
+`recibidos.jsonl` con un `id` que solo crece. Si el archivo pasa del doble de
+lo configurado, se recorta (se reescribe en `.tmp` y `os.replace`, que cambia
+el archivo de golpe: nunca queda a medias).
+
+**Cómo se sube.** Sin SFTP: el archivo va en base64 dentro del comando
+(`printf %s <base64> | base64 -d > receptor.py`), así no hay problemas de
+comillas ni de caracteres raros.
+
+**Cómo queda corriendo.** `setsid nohup python3 receptor.py </dev/null
+>>receptor.log 2>&1 &`: `setsid` lo separa de la sesión SSH (al cerrarla no se
+muere), `nohup` ignora el "colgaste", y redirigir la entrada y salida deja
+libre el canal SSH. Para que vuelva tras un reinicio, un renglón en
+`crontab` con `@reboot` (no necesita root), marcado con
+`# ck-webhook-<clave>` para poder quitarlo después sin tocar lo demás.
+
+**Leer solo lo nuevo.** La app guarda `ultimo_id` (el último que trajo) y
+pide `id > ultimo_id`: nada se repite aunque leas mil veces.
+
+**La clave en la URL** (`secrets.token_urlsafe`) hace las veces de contraseña:
+quien no la sepa recibe 404. Es HTTP sin cifrar; para HTTPS pon nginx delante
+(el receptor ya respeta `X-Forwarded-For` para la IP).
+
+**Dónde.** `modulos/kraken/webhooks/receptor.py` (lo del servidor),
+`servicio.py` (instalar, leer, probar), `views/` (pantallas); migración 0020.
+
+
 ## Registro de cambios de estas notas
 
 | Fecha | Versión app | Notas agregadas |
@@ -1466,3 +1513,4 @@ y recalcula las variables faltantes como si lo hubieras tecleado.
 | 2026-10-15 | 1.8.0 | 48–51 (DB-API para tres motores, solo lectura del lado del servidor, túnel SSH, consola SSH) |
 | 2026-10-15 | 1.8.1 | 52 (Postman Collection v2.1: importar, exportar, ida y vuelta) |
 | 2026-10-15 | 1.8.2 | 53 (variables de colores con TextSpan y autocompletar con el cursor) |
+| 2026-10-15 | 1.9.0 | 54 (webhooks: receptor en tu servidor, setsid/nohup, crontab @reboot) |
